@@ -2,6 +2,17 @@
 
 Portail d'intelligence terrain pour chauffeurs VTC. Interface minimaliste inspirée de l'esthétique OPÉRA Console.
 
+## Repo layout (front / back)
+
+| Path | Role |
+|------|------|
+| **/** (root) | **Backend** — Next.js (city-flow). API: `/api/flow/state`, `/api/billing/checkout`. Data: `data/city-signals/`. |
+| **/flow-frontend** | **Frontend** — Vite + React. Landing, demo, activate, dashboard. Proxy `/api` to backend in dev. |
+
+- **Backend:** `npm install && npm run dev` (port 3000).
+- **Frontend:** `cd flow-frontend && npm install && npm run dev` (port 5173). Set `VITE_FLOW_API_URL` or use Vite proxy to backend.
+- Deploy: backend and frontend can be two Vercel projects (root + `flow-frontend`).
+
 ## Stack
 
 - **Next.js 15** (App Router)

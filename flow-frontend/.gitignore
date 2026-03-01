@@ -1,0 +1,15 @@
+# Dependencies and build
+node_modules/
+dist/
+
+# Env (keep .env.example)
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.DS_Store
+*.log
+
+# Vite
+*.local

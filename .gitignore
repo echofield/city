@@ -2,6 +2,8 @@
 
 # dependencies
 /node_modules
+/flow-frontend/node_modules
+/flow-frontend/dist
 /.pnp
 .pnp.*
 .yarn/*
@@ -23,6 +25,9 @@
 # misc
 .DS_Store
 *.pem
+
+# city signals (daily packs; optional: remove to commit sample packs)
+/data/
 
 # debug
 npm-debug.log*
