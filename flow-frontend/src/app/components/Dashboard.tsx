@@ -251,12 +251,25 @@ export function Dashboard(props: {
   const [entered, setEntered] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("maintenant");
   const [showActivationOverlay, setShowActivationOverlay] = useState(false);
+  const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
   const sessionStartRef = useRef(Date.now());
   const animFrameRef = useRef(0);
   const hasEverSucceededRef = useRef(false);
   const staleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const demoMountedRef = useRef(0);
   const hasInteractedRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined") return;
+    const onOffline = () => setIsOffline(true);
+    const onOnline = () => setIsOffline(false);
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
+    return () => {
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online", onOnline);
+    };
+  }, []);
 
   useEffect(() => {
     // Check if user went through onboarding
@@ -359,6 +372,11 @@ export function Dashboard(props: {
     };
   }, []);
 
+  const tonightAnchor = useMemo(
+    () => (flowState ? getTonightAnchor(flowState) : null),
+    [flowState]
+  );
+
   if (!flowState) {
     return <div className="h-screen w-screen" style={{ backgroundColor: C.bg }} />;
   }
@@ -373,8 +391,6 @@ export function Dashboard(props: {
     { id: "cesoir", label: "CE SOIR", full: "CE SOIR" },
     { id: "complet", label: "COMPLET", full: "COMPLET" },
   ];
-
-  const tonightAnchor = useMemo(() => getTonightAnchor(flowState), [flowState]);
 
   return (
     <div
@@ -423,7 +439,19 @@ export function Dashboard(props: {
           </span>
         </div>
         <div className="flex items-center gap-4">
-          {demoMode ? (
+          {isOffline ? (
+            <span
+              className="uppercase tracking-[0.1em]"
+              style={{
+                ...label,
+                fontSize: "0.5rem",
+                color: C.textGhost,
+                letterSpacing: "0.08em",
+              }}
+            >
+              Sans connexion — mode système
+            </span>
+          ) : demoMode ? (
             <span
               className="uppercase tracking-[0.12em]"
               style={{
