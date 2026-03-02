@@ -27,11 +27,11 @@ export default function DashboardPage() {
 
       // Fetch all data in parallel
       const [profileRes, subRes, briefRes, alertsRes, referralRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', user.id).single(),
-        supabase.from('subscriptions').select('*').eq('user_id', user.id).eq('status', 'active').single(),
-        supabase.from('briefs').select('*').eq('user_id', user.id).order('date', { ascending: false }).limit(1).single(),
-        supabase.from('alerts').select('*').eq('user_id', user.id).eq('active', true).order('created_at', { ascending: false }),
-        supabase.from('referral_accounts').select('*').eq('user_id', user.id).single(),
+        supabase.schema('app').from('profiles').select('*').eq('id', user.id).single(),
+        supabase.schema('app').from('subscriptions').select('*').eq('user_id', user.id).eq('status', 'active').single(),
+        supabase.schema('app').from('briefs').select('*').eq('user_id', user.id).order('date', { ascending: false }).limit(1).single(),
+        supabase.schema('app').from('alerts').select('*').eq('user_id', user.id).eq('active', true).order('created_at', { ascending: false }),
+        supabase.schema('app').from('referral_accounts').select('*').eq('user_id', user.id).single(),
       ])
 
       if (profileRes.data) setProfile(profileRes.data)

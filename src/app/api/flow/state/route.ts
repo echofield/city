@@ -4,7 +4,7 @@ import { orchestrate } from '@/lib/shift-conductor/orchestrator'
 import { compiledBriefAndMoveToFlowState, TERRITORY_IDS } from '@/lib/flow-engine/flow-state-adapter'
 import { compiledFromCitySignalsPackV1 } from '@/lib/flow-engine/compile-from-pack'
 import { buildDayTemplates } from '@/lib/flow-engine/day-templates'
-import { loadCitySignals } from '@/lib/city-signals/loadCitySignals'
+import { loadCitySignalsAsync } from '@/lib/city-signals/loadCitySignals'
 import { normalizeCitySignalsPack } from '@/lib/city-signals/normalize-pack'
 import type { FlowState } from '@/types/flow-state'
 
@@ -96,7 +96,7 @@ export async function GET(request: Request) {
     })
   }
 
-  const rawPack = loadCitySignals()
+  const rawPack = await loadCitySignalsAsync()
   const pack = rawPack ? normalizeCitySignalsPack(rawPack) : null
   const brief = pack ? compiledFromCitySignalsPackV1(pack) : MOCK_COMPILED_BRIEF
   const input = {

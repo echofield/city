@@ -1,0 +1,20 @@
+-- =============================================================================
+-- Run this FIRST in Supabase SQL editor (as superuser).
+-- GRANTs for app schema: external_rw (direct Postgres) + anon/authenticated (Supabase JS).
+-- =============================================================================
+
+-- external_rw (direct Postgres / scripts)
+GRANT USAGE ON SCHEMA app TO external_rw;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO external_rw;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA app TO external_rw;
+ALTER DEFAULT PRIVILEGES IN SCHEMA app GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO external_rw;
+ALTER DEFAULT PRIVILEGES IN SCHEMA app GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO external_rw;
+
+-- Optional: if external_rw should create objects in app, uncomment:
+-- GRANT CREATE ON SCHEMA app TO external_rw;
+
+-- anon / authenticated (Supabase JS client; RLS still enforces row access)
+GRANT USAGE ON SCHEMA app TO anon, authenticated;
+
+-- Optional: if you want anon/authenticated to have explicit SELECT on plan_catalog (read-only):
+-- GRANT SELECT ON app.plan_catalog TO anon, authenticated;

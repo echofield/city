@@ -51,6 +51,7 @@ export async function updateSession(request: NextRequest) {
   if (user && !isPublicRoute && pathname !== '/onboarding' && pathname !== '/pay') {
     // Fetch profile to check onboarding status
     const { data: profile } = await supabase
+      .schema('app')
       .from('profiles')
       .select('onboarding_complete')
       .eq('id', user.id)
@@ -66,6 +67,7 @@ export async function updateSession(request: NextRequest) {
     } else {
       // Check subscription
       const { data: subscription } = await supabase
+        .schema('app')
         .from('subscriptions')
         .select('status')
         .eq('user_id', user.id)

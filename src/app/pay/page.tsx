@@ -22,6 +22,7 @@ export default function PayPage() {
   useEffect(() => {
     async function fetchPlans() {
       const { data } = await supabase
+        .schema('app')
         .from('plan_catalog')
         .select('*')
         .eq('is_active', true)
@@ -46,6 +47,7 @@ export default function PayPage() {
 
     if (user) {
       const { data: subscription } = await supabase
+        .schema('app')
         .from('subscriptions')
         .select('status')
         .eq('user_id', user.id)

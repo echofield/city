@@ -1,0 +1,112 @@
+-- =============================================================================
+-- Run this SECOND in Supabase SQL editor (after 01_GRANTS.txt).
+-- Safe to run repeatedly: transaction, IF NOT EXISTS indexes, safe policy drops.
+-- Column names: profiles.user_id; others user_id; referrals referrer_user_id/referred_user_id.
+-- =============================================================================
+
+BEGIN;
+
+-- ---------------------------------------------------------------------------
+-- 1) Indexes for RLS (full indexes; partials only if large historical data)
+-- ---------------------------------------------------------------------------
+CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON app.profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON app.subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_briefs_user_id ON app.briefs(user_id);
+CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON app.alerts(user_id);
+CREATE INDEX IF NOT EXISTS idx_referral_accounts_user_id ON app.referral_accounts(user_id);
+CREATE INDEX IF NOT EXISTS idx_referrals_referrer_user_id ON app.referrals(referrer_user_id);
+CREATE INDEX IF NOT EXISTS idx_referrals_referred_user_id ON app.referrals(referred_user_id);
+CREATE INDEX IF NOT EXISTS idx_plan_catalog_is_active ON app.plan_catalog(is_active);
+
+-- ---------------------------------------------------------------------------
+-- 2) Re-affirm RLS is enabled (no-op if already enabled)
+-- ---------------------------------------------------------------------------
+ALTER TABLE app.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.briefs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.alerts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.plan_catalog ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.referral_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.referrals ENABLE ROW LEVEL SECURITY;
+
+-- ---------------------------------------------------------------------------
+-- 3) Drop existing policies safely (DO block: missing policy won't abort)
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE
+  pol text[];
+  policies text[][] := ARRAY[
+    ARRAY['Users can read own profile', 'profiles'],
+    ARRAY['Users can insert own profile', 'profiles'],
+    ARRAY['Users can update own profile', 'profiles'],
+    ARRAY['Users can read own subscription', 'subscriptions'],
+    ARRAY['Users can insert own subscription', 'subscriptions'],
+    ARRAY['Users can update own subscription', 'subscriptions'],
+    ARRAY['Users can read own briefs', 'briefs'],
+    ARRAY['Users can insert own briefs', 'briefs'],
+    ARRAY['Users can update own briefs', 'briefs'],
+    ARRAY['Users can read own alerts', 'alerts'],
+    ARRAY['Users can insert own alerts', 'alerts'],
+    ARRAY['Users can update own alerts', 'alerts'],
+    ARRAY['Anyone can read active plans', 'plan_catalog'],
+    ARRAY['Anon can read active plans', 'plan_catalog'],
+    ARRAY['Users can read own referral account', 'referral_accounts'],
+    ARRAY['Users can insert own referral account', 'referral_accounts'],
+    ARRAY['Users can update own referral account', 'referral_accounts'],
+    ARRAY['Users can read referrals they made', 'referrals'],
+    ARRAY['Users can read referrals where they are referred', 'referrals'],
+    ARRAY['Users can insert referrals as referrer', 'referrals'],
+    ARRAY['Users can update own referrals (referrer)', 'referrals']
+  ];
+BEGIN
+  FOREACH pol SLICE 1 IN ARRAY policies
+  LOOP
+    BEGIN
+      EXECUTE format('DROP POLICY IF EXISTS %I ON app.%I', pol[1], pol[2]);
+    EXCEPTION WHEN OTHERS THEN
+      RAISE NOTICE 'Skipped drop policy % on app.%: %', pol[1], pol[2], SQLERRM;
+    END;
+  END LOOP;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- 4) Create policies (intent + scope in comments)
+-- ---------------------------------------------------------------------------
+
+-- app.profiles: user_id = auth.uid() (read/write, TO authenticated)
+CREATE POLICY "Users can read own profile" ON app.profiles FOR SELECT TO authenticated USING (user_id = auth.uid());
+CREATE POLICY "Users can insert own profile" ON app.profiles FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+CREATE POLICY "Users can update own profile" ON app.profiles FOR UPDATE TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- app.subscriptions: user_id = auth.uid() (read/write, TO authenticated)
+CREATE POLICY "Users can read own subscription" ON app.subscriptions FOR SELECT TO authenticated USING (user_id = auth.uid());
+CREATE POLICY "Users can insert own subscription" ON app.subscriptions FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+CREATE POLICY "Users can update own subscription" ON app.subscriptions FOR UPDATE TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- app.briefs: user_id = auth.uid() (read/write, TO authenticated)
+CREATE POLICY "Users can read own briefs" ON app.briefs FOR SELECT TO authenticated USING (user_id = auth.uid());
+CREATE POLICY "Users can insert own briefs" ON app.briefs FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+CREATE POLICY "Users can update own briefs" ON app.briefs FOR UPDATE TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- app.alerts: user_id = auth.uid() (read/write, TO authenticated)
+CREATE POLICY "Users can read own alerts" ON app.alerts FOR SELECT TO authenticated USING (user_id = auth.uid());
+CREATE POLICY "Users can insert own alerts" ON app.alerts FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+CREATE POLICY "Users can update own alerts" ON app.alerts FOR UPDATE TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- app.referral_accounts: user_id = auth.uid() (read/write, TO authenticated)
+CREATE POLICY "Users can read own referral account" ON app.referral_accounts FOR SELECT TO authenticated USING (user_id = auth.uid());
+CREATE POLICY "Users can insert own referral account" ON app.referral_accounts FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+CREATE POLICY "Users can update own referral account" ON app.referral_accounts FOR UPDATE TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- app.plan_catalog: read-only (SELECT, is_active = true). authenticated + optional anon for public pricing.
+CREATE POLICY "Anyone can read active plans" ON app.plan_catalog FOR SELECT TO authenticated USING (is_active = true);
+CREATE POLICY "Anon can read active plans" ON app.plan_catalog FOR SELECT TO anon USING (is_active = true);
+-- If pricing page is auth-only, comment out the "Anon can read active plans" line above.
+
+-- app.referrals: referrer_user_id / referred_user_id (read: as referrer or referred; insert/update only as referrer, TO authenticated)
+CREATE POLICY "Users can read referrals they made" ON app.referrals FOR SELECT TO authenticated USING (referrer_user_id = auth.uid());
+CREATE POLICY "Users can read referrals where they are referred" ON app.referrals FOR SELECT TO authenticated USING (referred_user_id = auth.uid());
+CREATE POLICY "Users can insert referrals as referrer" ON app.referrals FOR INSERT TO authenticated WITH CHECK (referrer_user_id = auth.uid());
+CREATE POLICY "Users can update own referrals (referrer)" ON app.referrals FOR UPDATE TO authenticated USING (referrer_user_id = auth.uid()) WITH CHECK (referrer_user_id = auth.uid());
+
+COMMIT;

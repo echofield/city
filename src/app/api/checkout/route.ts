@@ -24,6 +24,7 @@ export async function POST(request: Request) {
 
     // Check for existing Stripe customer
     const { data: subscription } = await supabase
+      .schema('app')
       .from('subscriptions')
       .select('stripe_customer_id')
       .eq('user_id', user.id)

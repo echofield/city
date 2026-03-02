@@ -134,6 +134,7 @@ export default function OnboardingPage() {
 
       if (user) {
         const { error } = await supabase
+          .schema('app')
           .from('profiles')
           .upsert({
             id: user.id,
