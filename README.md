@@ -11,7 +11,7 @@ Portail d'intelligence terrain pour chauffeurs VTC. Interface minimaliste inspir
 
 - **Backend:** `npm install && npm run dev` (port 3000).
 - **Frontend:** `cd flow-frontend && npm install && npm run dev` (port 5173). Set `VITE_FLOW_API_URL` or use Vite proxy to backend.
-- Deploy: backend and frontend can be two Vercel projects (root + `flow-frontend`).
+- Deploy: backend and frontend can be two Vercel projects (root + `flow-frontend`). Root `.vercelignore` excludes `flow-frontend` so the backend build does not type-check it.
 
 ## Stack
 

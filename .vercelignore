@@ -1,0 +1,4 @@
+# Backend (root) deployment: exclude frontend app so Next.js build does not type-check it.
+# If you add a second Vercel project with Root Directory = flow-frontend, that project
+# builds from flow-frontend/ and will have its own context (this ignore applies to root project).
+flow-frontend
