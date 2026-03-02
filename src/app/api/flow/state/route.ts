@@ -1,12 +1,16 @@
 import { NextResponse } from 'next/server'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 import { MOCK_COMPILED_BRIEF } from '@/lib/flow-engine/mock-data'
 import { orchestrate } from '@/lib/shift-conductor/orchestrator'
 import { compiledBriefAndMoveToFlowState, TERRITORY_IDS } from '@/lib/flow-engine/flow-state-adapter'
 import { compiledFromCitySignalsPackV1 } from '@/lib/flow-engine/compile-from-pack'
 import { buildDayTemplates } from '@/lib/flow-engine/day-templates'
-import { loadCitySignalsAsync } from '@/lib/city-signals/loadCitySignals'
+import { loadCitySignals } from '@/lib/city-signals/loadCitySignals'
+import { loadWeeklySignals } from '@/lib/city-signals/loadWeeklySignals'
 import { normalizeCitySignalsPack } from '@/lib/city-signals/normalize-pack'
-import type { FlowState } from '@/types/flow-state'
+import type { FlowState, Ramification } from '@/types/flow-state'
 
 /** Deterministic mock FlowState for mock=1 */
 function getMockFlowState(sessionStart?: number): FlowState {
@@ -96,9 +100,17 @@ export async function GET(request: Request) {
     })
   }
 
-  const rawPack = await loadCitySignalsAsync()
+  const rawPack = await loadCitySignals()
   const pack = rawPack ? normalizeCitySignalsPack(rawPack) : null
   const brief = pack ? compiledFromCitySignalsPackV1(pack) : MOCK_COMPILED_BRIEF
+
+  // Load weekly skeleton
+  const weeklySkeleton = await loadWeeklySignals()
+
+  // Extract ramifications from pack (pass-through strategy)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ramifications: Ramification[] = (rawPack as any)?.ramifications ?? []
+
   const input = {
     brief_id: 'mock-brief',
     now_block: {
@@ -119,7 +131,7 @@ export async function GET(request: Request) {
     },
   }
   const { move } = orchestrate(input)
-  const flowState = compiledBriefAndMoveToFlowState(brief, move, sessionStart)
+  const flowState = compiledBriefAndMoveToFlowState(brief, move, sessionStart, ramifications, weeklySkeleton)
   flowState.templates = buildDayTemplates(pack)
 
   return NextResponse.json(flowState, {

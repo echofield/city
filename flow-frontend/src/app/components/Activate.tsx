@@ -74,26 +74,6 @@ export function Activate() {
           Activer Flow
         </button>
 
-        {/* QR: alternative way to open Stripe checkout */}
-        <a
-          href={PAYMENT_LINK_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex flex-col items-center gap-2 mt-2"
-          style={{ color: "inherit", textDecoration: "none" }}
-        >
-          <img
-            src="/qr-stripe-subscribe.png"
-            alt="Scanner pour s'abonner"
-            width={140}
-            height={140}
-            style={{ borderRadius: 8 }}
-          />
-          <span style={{ ...label, fontSize: "0.65rem", color: C.textGhost }}>
-            Scanner pour s'abonner
-          </span>
-        </a>
-
         <p style={{ ...label, fontSize: "0.65rem", color: C.textGhost }}>
           Annulable à tout moment.
         </p>

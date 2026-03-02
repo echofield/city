@@ -11,7 +11,7 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[]
 
-// Profile preferences
+// Profile preferences (legacy)
 export interface ProfilePreferences {
   shift: 'morning' | 'afternoon' | 'night'
   zones: string[]
@@ -19,6 +19,41 @@ export interface ProfilePreferences {
   trip_type: 'short' | 'long' | 'airports' | 'business' | 'mixed'
   driving_style: 'safe' | 'balanced' | 'chase'
   strategy: 'min_dead_km' | 'max_euro_h' | 'balanced'
+}
+
+// Intelligent Profile State (FLOW engine)
+export type ProfileVariant =
+  | 'NIGHT_CHASER'
+  | 'SAFE_STEADY'
+  | 'AIRPORT_LONG'
+  | 'EAST_NIGHTLIFE'
+  | 'WEST_BUSINESS'
+  | 'BALANCED'
+
+export interface ProfileWeights {
+  nightlife: number
+  events_big: number
+  micro_events: number
+  commute: number
+  airport: number
+  business: number
+  rain_uplift: number
+  friction_avoidance: number
+  dead_km_penalty: number
+  saturation_penalty: number
+}
+
+export interface ProfileState {
+  variant: ProfileVariant
+  weights: ProfileWeights
+  constraints: {
+    preferred_areas: string[]
+    avoid_areas: string[]
+    shift_window: { start: string; end: string }
+    traffic_tolerance: 'LOW' | 'MED' | 'HIGH'
+  }
+  calibrated_at: string
+  confidence: number
 }
 
 // Brief content structure
@@ -59,6 +94,7 @@ export interface Database {
           email: string
           full_name: string | null
           preferences: ProfilePreferences | null
+          profile_state: ProfileState | null // FLOW intelligent profile
           onboarding_complete: boolean
           created_at: string
           updated_at: string
@@ -68,6 +104,7 @@ export interface Database {
           email: string
           full_name?: string | null
           preferences?: ProfilePreferences | null
+          profile_state?: ProfileState | null
           onboarding_complete?: boolean
           created_at?: string
           updated_at?: string
@@ -77,6 +114,7 @@ export interface Database {
           email?: string
           full_name?: string | null
           preferences?: ProfilePreferences | null
+          profile_state?: ProfileState | null
           onboarding_complete?: boolean
           updated_at?: string
         }
@@ -261,6 +299,90 @@ export interface Database {
           converted_at?: string | null
         }
       }
+      // FLOW Intelligence Engine tables
+      driver_feedback: {
+        Row: {
+          id: string
+          user_id: string
+          brief_id: string
+          rating: number // 1 = helped, 0 = neutral, -1 = not useful
+          note: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          brief_id: string
+          rating: number
+          note?: string | null
+          created_at?: string
+        }
+        Update: {
+          rating?: number
+          note?: string | null
+        }
+      }
+      brief_runs: {
+        Row: {
+          id: string
+          run_mode: 'daily' | 'weekly' | 'intraday_alert'
+          horizon: '24h' | '7d'
+          profiles_processed: number
+          briefs_generated: number
+          model: string
+          tokens_used: number
+          confidence_avg: number
+          started_at: string
+          completed_at: string | null
+          errors: string[]
+        }
+        Insert: {
+          id?: string
+          run_mode: 'daily' | 'weekly' | 'intraday_alert'
+          horizon: '24h' | '7d'
+          profiles_processed?: number
+          briefs_generated?: number
+          model?: string
+          tokens_used?: number
+          confidence_avg?: number
+          started_at?: string
+          completed_at?: string | null
+          errors?: string[]
+        }
+        Update: {
+          profiles_processed?: number
+          briefs_generated?: number
+          tokens_used?: number
+          confidence_avg?: number
+          completed_at?: string | null
+          errors?: string[]
+        }
+      }
+      source_items: {
+        Row: {
+          id: string
+          pack_date: string
+          horizon: '24h' | '7d'
+          content_json: Json
+          sources_count: number
+          generated_at: string
+          expires_at: string
+        }
+        Insert: {
+          id?: string
+          pack_date: string
+          horizon: '24h' | '7d'
+          content_json: Json
+          sources_count?: number
+          generated_at?: string
+          expires_at?: string
+        }
+        Update: {
+          content_json?: Json
+          sources_count?: number
+          expires_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
@@ -282,3 +404,8 @@ export type Brief = Database['public']['Tables']['briefs']['Row']
 export type Alert = Database['public']['Tables']['alerts']['Row']
 export type ReferralAccount = Database['public']['Tables']['referral_accounts']['Row']
 export type Referral = Database['public']['Tables']['referrals']['Row']
+
+// FLOW Intelligence Engine types
+export type DriverFeedback = Database['public']['Tables']['driver_feedback']['Row']
+export type BriefRun = Database['public']['Tables']['brief_runs']['Row']
+export type SourceItem = Database['public']['Tables']['source_items']['Row']

@@ -16,7 +16,7 @@ interface StatusBarProps {
 
 export function StatusBar({ items, className }: StatusBarProps) {
   const statusColors = {
-    active: 'text-signal',
+    active: 'text-text-primary',
     warming: 'text-intent',
     inactive: 'text-text-ghost',
   }

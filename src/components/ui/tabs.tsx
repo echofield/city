@@ -44,7 +44,7 @@ export function TabsList({ children, className }: TabsListProps) {
   return (
     <div
       className={cn(
-        'inline-flex items-center gap-1 rounded-lg bg-surface p-1 border border-border-subtle',
+        'inline-flex items-center gap-1 rounded-lg bg-surface p-1 border border-border',
         className
       )}
     >
@@ -75,7 +75,7 @@ export function TabsTrigger({ value, children, className }: TabsTriggerProps) {
       {isActive && (
         <motion.div
           layoutId="active-tab"
-          className="absolute inset-0 bg-surface-raised rounded-md border border-border"
+          className="absolute inset-0 bg-surface-raised rounded-md"
           transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
         />
       )}

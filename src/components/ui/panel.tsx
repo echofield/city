@@ -14,14 +14,14 @@ export const Panel = forwardRef<HTMLDivElement, PanelProps>(
     const variants = {
       default: 'bg-surface border-border',
       raised: 'bg-surface-raised border-border',
-      glass: 'bg-surface-glass backdrop-blur-xl border-border',
+      glass: 'bg-surface border-border',
     }
 
     const glows = {
       none: '',
-      signal: 'shadow-[0_0_20px_rgba(0,177,79,0.1)]',
-      intent: 'shadow-[0_0_20px_rgba(201,162,74,0.08)]',
-      alert: 'shadow-[0_0_20px_rgba(196,92,62,0.08)]',
+      signal: 'border-signal/20',
+      intent: 'border-intent/20',
+      alert: 'border-alert/20',
     }
 
     return (

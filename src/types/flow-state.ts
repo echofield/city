@@ -84,6 +84,66 @@ export interface FlowState {
 
   /** Day templates derived from daily pack (Matin/Midi/Soir/Nuit) */
   templates?: DayTemplate[];
+
+  /** Ramifications: effects propagating from current signals */
+  ramifications?: Ramification[];
+
+  /** Weekly skeleton: predicted windows for the current week */
+  weeklySkeleton?: WeeklySkeleton | null;
+}
+
+/** Confidence level as enum string (not numeric) */
+export type ConfidenceLevel = "high" | "medium" | "low";
+
+/** Ramification kind including banlieue variants */
+export type RamificationKind =
+  | "banlieue_pressure"
+  | "banlieue_x_friction"
+  | "surge_momentum"
+  | "fleet_saturation"
+  | "event_dispersion"
+  | "transport_disruption"
+  | "weather_shift";
+
+export interface Ramification {
+  id: string;
+  kind: RamificationKind;
+  effect_zone: string;
+  explanation: string;
+  confidence: ConfidenceLevel;
+  /** Optional fields for detailed ramifications */
+  zone?: string;
+  score?: number;
+  window?: string;
+  causes?: string[];
+  pressure_zone?: string;
+  resistance_zone?: string;
+  corridor?: string;
+  window_start?: string;
+  window_end?: string;
+  regime?: string;
+  status?: string;
+  tone?: string;
+}
+
+export interface SkeletonWindow {
+  id: string;
+  label: string;
+  day_of_week: number;
+  window_start: string;
+  window_end: string;
+  signal_type: string;
+  why: string;
+  confidence: ConfidenceLevel;
+  zones?: string[];
+  expected_intensity?: number;
+}
+
+export interface WeeklySkeleton {
+  territory: string;
+  week_of: string;
+  generated_at: string;
+  skeleton_windows: SkeletonWindow[];
 }
 
 export type DayTemplateWindow = "morning" | "midday" | "evening" | "night";

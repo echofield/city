@@ -46,6 +46,18 @@ export function LandingHero() {
     if (ref) localStorage.setItem("flow_ref", ref);
   }, [searchParams]);
 
+  // Sans connexion → direct sur le système (/demo)
+  useEffect(() => {
+    if (typeof navigator === "undefined") return;
+    if (!navigator.onLine) {
+      navigate("/demo", { replace: true });
+      return;
+    }
+    const onOffline = () => navigate("/demo", { replace: true });
+    window.addEventListener("offline", onOffline);
+    return () => window.removeEventListener("offline", onOffline);
+  }, [navigate]);
+
   // Poll API every 15–20s; fallback to minimal static state if fetch fails
   useEffect(() => {
     let active = true;

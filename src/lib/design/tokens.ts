@@ -1,7 +1,33 @@
 /**
  * City Flow Intelligence - Design Tokens
- * Inspired by OPÉRA Meridien system
+ * Source of truth. ARCHÉ grammar port (V0): Inter + Cormorant, green + gold, 400ms, ultra-light shadows, spacing 8→96.
  */
+
+// ════════════════════════════════════════
+// ARCHÉ grammar (arche-paris family)
+// ════════════════════════════════════════
+export const arche = {
+  paper: '#FAF8F2',
+  ink: '#1A1A1A',
+  green: '#003D2C',
+  gold: '#A38767',
+  greyLight: '#E8E5DE',
+  greyMedium: '#C8C4BA',
+  mapInk: 'rgba(60, 63, 58, 1)',
+  transition: '400ms cubic-bezier(0.4, 0, 0.2, 1)',
+  shadowSm: '0 1px 3px rgba(26, 26, 26, 0.03)',
+  shadowMd: '0 2px 8px rgba(26, 26, 26, 0.04)',
+  shadowLg: '0 4px 16px rgba(26, 26, 26, 0.05)',
+  spacing: {
+    xs: '8px',
+    sm: '16px',
+    md: '24px',
+    lg: '40px',
+    xl: '64px',
+    xxl: '96px',
+  },
+  fontSerif: "'Cormorant Garamond', Georgia, serif",
+} as const
 
 export const colors = {
   // Base
@@ -16,15 +42,15 @@ export const colors = {
   textGhost: 'rgba(231, 236, 235, 0.35)',
   textWhisper: 'rgba(231, 236, 235, 0.15)',
 
-  // Signal Green (Flow accent)
-  signal: '#00B14F',
-  signalDark: '#00893C',
-  signalGlow: 'rgba(0, 177, 79, 0.15)',
+  // Signal = ARCHÉ green (readable on void: lighter variant)
+  signal: '#2d9d7a',
+  signalDark: arche.green,
+  signalGlow: 'rgba(0, 61, 44, 0.25)',
 
-  // Intent Gold (Field accent)
-  intent: '#C9A24A',
-  intentDark: '#A38433',
-  intentGlow: 'rgba(201, 162, 74, 0.12)',
+  // Intent = ARCHÉ gold
+  intent: '#c9a574',
+  intentDark: arche.gold,
+  intentGlow: 'rgba(163, 135, 103, 0.2)',
 
   // Status
   alert: '#C45C3E',
@@ -38,6 +64,7 @@ export const colors = {
 
 export const typography = {
   fontSans: '"Inter", system-ui, sans-serif',
+  fontSerif: arche.fontSerif,
   fontMono: '"JetBrains Mono", monospace',
 
   // Font sizes
@@ -69,34 +96,38 @@ export const typography = {
 
 export const spacing = {
   xs: '0.25rem',   // 4px
-  sm: '0.5rem',    // 8px
-  md: '1rem',      // 16px
-  lg: '1.5rem',    // 24px
-  xl: '2rem',      // 32px
-  '2xl': '3rem',   // 48px
-  '3xl': '4rem',   // 64px
+  sm: '0.5rem',   // 8px
+  md: '1rem',     // 16px
+  lg: '1.5rem',   // 24px
+  xl: '2rem',     // 32px
+  '2xl': '3rem',  // 48px
+  '3xl': '4rem',  // 64px
+  // ARCHÉ scale 8→96
+  arche: arche.spacing,
 } as const
 
 export const motion = {
   duration: {
     fast: '150ms',
-    base: '300ms',
+    base: '400ms',
     slow: '600ms',
     gentle: '1400ms',
   },
+  transitionBase: arche.transition,
   easing: {
     out: 'cubic-bezier(0.22, 1, 0.36, 1)',
-    inOut: 'cubic-bezier(0.45, 0, 0.55, 1)',
+    inOut: 'cubic-bezier(0.45, 0, 0.2, 1)',
+    arche: 'cubic-bezier(0.4, 0, 0.2, 1)',
   },
 } as const
 
 export const shadows = {
-  sm: '0 1px 2px rgba(0, 0, 0, 0.3)',
-  md: '0 4px 12px rgba(0, 0, 0, 0.4)',
-  lg: '0 8px 24px rgba(0, 0, 0, 0.5)',
+  sm: arche.shadowSm,
+  md: arche.shadowMd,
+  lg: arche.shadowLg,
   glow: {
-    signal: '0 0 20px rgba(0, 177, 79, 0.2)',
-    intent: '0 0 20px rgba(201, 162, 74, 0.15)',
+    signal: '0 0 20px rgba(0, 61, 44, 0.25)',
+    intent: '0 0 20px rgba(163, 135, 103, 0.2)',
     alert: '0 0 20px rgba(196, 92, 62, 0.15)',
   },
 } as const

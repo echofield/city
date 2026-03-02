@@ -1,102 +1,125 @@
 /**
- * Load daily city-signals pack: Supabase (LIVE) first with TTL cache, then fallback to local JSON.
- * LIVE reads use anon client only — RLS applies (demo-today / paywall).
+ * Load CitySignalsPackV1 from Supabase Storage (flow-packs bucket).
+ * Falls back to local disk in development mode only.
+ *
+ * Storage path: flow-packs/daily/{YYYY-MM-DD}.paris-idf.json
  */
 
-import { createServerAnonClient } from '@/lib/supabase/server-admin'
-import { getTodayParis } from './dateParis'
-import { loadCitySignalsFromFile } from './loadCitySignalsFromFile'
+import * as fs from 'fs'
+import * as path from 'path'
+import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
+import { storageFetchJson, isStorageConfigured } from '@/lib/supabase/storageFetchJson'
 
-const DEFAULT_TERRITORY_ID = 'paris-idf'
-const CACHE_TTL_MS = 45_000 // 45s
+const STORAGE_BUCKET = 'flow-packs'
+const SIGNALS_DIR = path.join(process.cwd(), 'data', 'city-signals')
+const DAILY_DIR = path.join(SIGNALS_DIR, 'daily')
 
-let cache: { pack: unknown; expiresAt: number } | null = null
+/**
+ * Get today's date in Europe/Paris timezone as YYYY-MM-DD
+ */
+function getTodayParis(): string {
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Europe/Paris',
+  }).format(new Date())
+}
 
-/** public.city_signal_daily: pack is in row.payload. */
-function packFromRow(row: Record<string, unknown> | null): unknown {
-  if (!row || row.payload == null) return null
-  const p = row.payload
-  if (p != null && typeof p === 'object' && 'date' in (p as Record<string, unknown>)) return p
+/**
+ * Load daily pack for the given date (YYYY-MM-DD).
+ * If date omitted, use today (Europe/Paris).
+ *
+ * Priority:
+ *   1. Supabase Storage: flow-packs/daily/{date}.paris-idf.json
+ *   2. Local disk (dev only): data/city-signals/daily/{date}.paris-idf.json
+ *   3. Local disk legacy (dev only): data/city-signals/{date}.json
+ */
+export async function loadCitySignals(date?: string): Promise<CitySignalsPackV1 | null> {
+  const targetDate = date ?? getTodayParis()
+  const storagePath = `daily/${targetDate}.paris-idf.json`
+
+  // Try Supabase Storage first
+  if (isStorageConfigured()) {
+    try {
+      const pack = await storageFetchJson<CitySignalsPackV1>(STORAGE_BUCKET, storagePath)
+      if (pack) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[loadCitySignals] Source: Supabase Storage (${storagePath})`)
+        }
+        return pack
+      }
+    } catch (err) {
+      console.error('[loadCitySignals] Storage fetch error:', err)
+      // Fall through to disk fallback in dev
+    }
+  }
+
+  // Disk fallback (development only)
+  if (process.env.NODE_ENV === 'development') {
+    const diskPack = loadFromDisk(targetDate)
+    if (diskPack) {
+      console.log(`[loadCitySignals] Source: Local disk fallback`)
+      return diskPack
+    }
+  }
+
   return null
 }
 
-async function loadFromSupabase(territoryId: string, dateOverride?: string): Promise<unknown> {
-  const supabase = createServerAnonClient()
-  if (!supabase) return null
-
-  let date: string
-  try {
-    const { data: rpcData, error: rpcError } = await supabase.rpc('current_date_for_territory', {
-      territory_id: territoryId,
-    })
-    if (rpcError || rpcData == null) {
-      date = dateOverride ?? getTodayParis()
-    } else {
-      const row = Array.isArray(rpcData) ? rpcData[0] : rpcData
-      const d =
-        row && typeof row === 'object' && 'date' in row
-          ? (row as { date: string }).date
-          : typeof rpcData === 'string'
-            ? rpcData
-            : Object.values(row ?? {})[0]
-      date =
-        typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : (dateOverride ?? getTodayParis())
+/**
+ * Synchronous disk loader for development fallback.
+ */
+function loadFromDisk(targetDate: string): CitySignalsPackV1 | null {
+  // Try new path first
+  const newPath = path.join(DAILY_DIR, `${targetDate}.paris-idf.json`)
+  if (fs.existsSync(newPath)) {
+    try {
+      const raw = fs.readFileSync(newPath, 'utf-8')
+      return JSON.parse(raw) as CitySignalsPackV1
+    } catch {
+      // fall through
     }
-  } catch {
-    date = dateOverride ?? getTodayParis()
   }
 
-  try {
-    const { data: row, error } = await supabase
-      .from('city_signal_daily')
-      .select('payload, generated_at, schema_version, source, is_demo, current_version')
-      .eq('territory_id', territoryId)
-      .eq('date', date)
-      .maybeSingle()
+  // Try legacy path
+  const legacyPath = path.join(SIGNALS_DIR, `${targetDate}.json`)
+  if (fs.existsSync(legacyPath)) {
+    try {
+      const raw = fs.readFileSync(legacyPath, 'utf-8')
+      return JSON.parse(raw) as CitySignalsPackV1
+    } catch {
+      // fall through
+    }
+  }
 
-    if (error || row == null) return null
-    return packFromRow(row as Record<string, unknown>)
+  // Fallback to most recent pack
+  return fallbackToLatest()
+}
+
+function fallbackToLatest(): CitySignalsPackV1 | null {
+  // Try daily/ folder first
+  if (fs.existsSync(DAILY_DIR)) {
+    const files = fs.readdirSync(DAILY_DIR).filter((f) => f.endsWith('.json'))
+    if (files.length > 0) {
+      files.sort((a, b) => b.localeCompare(a))
+      const filePath = path.join(DAILY_DIR, files[0])
+      try {
+        const raw = fs.readFileSync(filePath, 'utf-8')
+        return JSON.parse(raw) as CitySignalsPackV1
+      } catch {
+        // fall through to root
+      }
+    }
+  }
+
+  // Fallback to root signals dir (legacy)
+  if (!fs.existsSync(SIGNALS_DIR)) return null
+  const files = fs.readdirSync(SIGNALS_DIR).filter((f) => f.endsWith('.json') && !f.startsWith('.'))
+  if (files.length === 0) return null
+  files.sort((a, b) => b.localeCompare(a))
+  const filePath = path.join(SIGNALS_DIR, files[0])
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8')
+    return JSON.parse(raw) as CitySignalsPackV1
   } catch {
     return null
   }
-}
-
-/**
- * Async: Supabase (RPC + city_signal_daily) with 45s TTL, then file fallback.
- * Use in API routes for LIVE mode.
- */
-export async function loadCitySignalsAsync(
-  date?: string,
-  territoryId: string = DEFAULT_TERRITORY_ID,
-  rootDir: string = process.cwd()
-): Promise<unknown> {
-  const now = Date.now()
-  if (cache && now < cache.expiresAt) return cache.pack
-
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
-  if (url?.trim()) {
-    const pack = await loadFromSupabase(territoryId, date)
-    if (pack != null) {
-      cache = { pack, expiresAt: now + CACHE_TTL_MS }
-      return pack
-    }
-  }
-
-  const filePack = loadCitySignalsFromFile(date, rootDir)
-  if (filePack != null) {
-    cache = { pack: filePack, expiresAt: now + CACHE_TTL_MS }
-    return filePack
-  }
-  return null
-}
-
-/**
- * Sync: file-only. Use when async is not possible or as fallback.
- * For LIVE API route, use loadCitySignalsAsync() instead.
- */
-export function loadCitySignals(
-  date?: string,
-  rootDir: string = process.cwd()
-): unknown {
-  return loadCitySignalsFromFile(date, rootDir)
 }
