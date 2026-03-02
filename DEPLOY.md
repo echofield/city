@@ -5,7 +5,8 @@ Two Vercel projects: this repo = backend; frontend = separate repo.
 ## Vercel env (after push to GitHub)
 
 - **LIVE reads use anon only** (RLS/paywall applies). Do not use service role for `loadCitySignalsAsync`.
-- `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` (or prefer `SUPABASE_URL` / `SUPABASE_ANON_KEY` for server-only naming).
+- `SUPABASE_URL` and `SUPABASE_ANON_KEY` (publishable key, e.g. `sb_publishable_...`). Fallback: `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+- **After editing .env.local:** stop the backend, then `npm run dev` again — Node loads env only at startup.
 - Optional: `SUPABASE_SERVICE_ROLE_KEY` only for server-side writes (ingest/webhook); **not** for LIVE reads.
 - **Set `ALLOWED_ORIGINS`** to your frontend prod URL (e.g. `https://your-frontend.vercel.app`). Do not leave `*` in production (avoids surprise issues when using cookies later).
 - Optional: `NEXT_PUBLIC_APP_URL` for redirects.
