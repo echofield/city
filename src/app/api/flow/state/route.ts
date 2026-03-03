@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
 import { MOCK_COMPILED_BRIEF } from '@/lib/flow-engine/mock-data'
 import { orchestrate } from '@/lib/shift-conductor/orchestrator'
 import { compiledBriefAndMoveToFlowState, TERRITORY_IDS } from '@/lib/flow-engine/flow-state-adapter'
@@ -11,7 +12,11 @@ import { buildPrimaryAction, buildActiveFrictions, buildAlternatives, buildDrive
 import { loadCitySignals } from '@/lib/city-signals/loadCitySignals'
 import { loadWeeklySignals } from '@/lib/city-signals/loadWeeklySignals'
 import { normalizeCitySignalsPack } from '@/lib/city-signals/normalize-pack'
+import { checkRateLimit, getClientIp, RATE_LIMITS } from '@/lib/rate-limit'
+import { flowStateParamsSchema, parseQueryParams } from '@/lib/validation'
+import { cache, CACHE_KEYS, CACHE_TTL } from '@/lib/cache'
 import type { FlowState, Ramification, DriverPosition } from '@/types/flow-state'
+import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
 
 /** Deterministic mock FlowState for mock=1 */
 function getMockFlowState(sessionStart?: number): FlowState {
@@ -84,57 +89,97 @@ function getMockFlowState(sessionStart?: number): FlowState {
   }
 }
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
-  const sessionStartParam = searchParams.get('sessionStart')
-  const zone = searchParams.get('zone') ?? undefined
-  const mock = searchParams.get('mock') === '1'
+/** Get city signals with caching */
+async function getCachedCitySignals(): Promise<CitySignalsPackV1 | null> {
+  const today = new Date().toISOString().split('T')[0]
+  const cacheKey = CACHE_KEYS.citySignals(today)
 
-  // Driver position for proximity calculations
-  const latParam = searchParams.get('lat')
-  const lngParam = searchParams.get('lng')
-  let driverPosition: DriverPosition | undefined
-  if (latParam && lngParam) {
-    const lat = parseFloat(latParam)
-    const lng = parseFloat(lngParam)
-    if (!isNaN(lat) && !isNaN(lng)) {
-      driverPosition = { lat, lng }
-    }
+  // Check cache first
+  const cached = cache.get<CitySignalsPackV1>(cacheKey)
+  if (cached) {
+    return cached
   }
 
-  const sessionStart = sessionStartParam
-    ? Number(sessionStartParam)
-    : undefined
+  // Load from source
+  const rawPack = await loadCitySignals()
+  if (rawPack) {
+    const normalized = normalizeCitySignalsPack(rawPack)
+    cache.set(cacheKey, normalized, CACHE_TTL.citySignals)
+    return normalized
+  }
 
-  if (mock) {
-    const flowState = getMockFlowState(
-      Number.isNaN(sessionStart as number) ? undefined : (sessionStart as number)
+  return null
+}
+
+export async function GET(request: Request) {
+  // Rate limiting
+  const clientIp = getClientIp(request)
+  const rateLimit = checkRateLimit(clientIp, RATE_LIMITS.flowApi)
+
+  if (!rateLimit.success) {
+    return NextResponse.json(
+      { error: { code: 'RATE_LIMITED', message: 'Too many requests' } },
+      {
+        status: 429,
+        headers: {
+          'X-RateLimit-Remaining': String(rateLimit.remaining),
+          'X-RateLimit-Reset': String(rateLimit.resetAt),
+          'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)),
+        },
+      }
     )
+  }
+
+  // Input validation
+  const { searchParams } = new URL(request.url)
+  const validation = parseQueryParams(searchParams, flowStateParamsSchema)
+
+  if (!validation.success) {
+    return NextResponse.json(
+      { error: { code: 'INVALID_PARAMS', message: validation.error } },
+      { status: 400 }
+    )
+  }
+
+  const { lat, lng, sessionStart, zone, mock } = validation.data
+
+  // Build driver position if coordinates provided
+  let driverPosition: DriverPosition | undefined
+  if (lat !== undefined && lng !== undefined) {
+    driverPosition = { lat, lng }
+  }
+
+  // Mock mode
+  if (mock === '1') {
+    const flowState = getMockFlowState(sessionStart)
     return NextResponse.json(flowState, {
-      headers: { 'Cache-Control': 'no-store' },
+      headers: {
+        'Cache-Control': 'no-store',
+        'X-RateLimit-Remaining': String(rateLimit.remaining),
+      },
     })
   }
 
-  const rawPack = await loadCitySignals()
-  const pack = rawPack ? normalizeCitySignalsPack(rawPack) : null
+  // Load city signals (cached)
+  const pack = await getCachedCitySignals()
   const brief = pack ? compiledFromCitySignalsPackV1(pack) : MOCK_COMPILED_BRIEF
 
   // Load weekly skeleton
   const weeklySkeleton = await loadWeeklySignals()
 
-  // Extract ramifications from pack (pass-through strategy)
+  // Extract ramifications from pack
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ramifications: Ramification[] = (rawPack as any)?.ramifications ?? []
+  const ramifications: Ramification[] = (pack as any)?.ramifications ?? []
 
   const input = {
-    brief_id: 'mock-brief',
+    brief_id: 'flow-brief',
     now_block: {
       zones: brief.now_block.zones,
       rule: brief.now_block.rule,
       confidence: brief.now_block.confidence,
     },
     driver: {
-      id: 'mock-driver',
+      id: 'driver',
       profile_variant: brief.meta.profile_variant,
       current_zone: zone ?? brief.now_block.zones?.[0] ?? 'Châtelet',
       shift_started_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
@@ -145,6 +190,7 @@ export async function GET(request: Request) {
       events_ending_soon: [],
     },
   }
+
   const { move } = orchestrate(input)
   const flowState = compiledBriefAndMoveToFlowState(brief, move, sessionStart, ramifications, weeklySkeleton, driverPosition)
   flowState.templates = buildDayTemplates(pack)
@@ -159,6 +205,9 @@ export async function GET(request: Request) {
   flowState.activeFrictions = buildActiveFrictions(brief, ramifications)
 
   return NextResponse.json(flowState, {
-    headers: { 'Cache-Control': 'no-store' },
+    headers: {
+      'Cache-Control': 'no-store',
+      'X-RateLimit-Remaining': String(rateLimit.remaining),
+    },
   })
 }

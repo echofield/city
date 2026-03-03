@@ -1,10 +1,19 @@
-// AUDIT MODE: Middleware disabled for visual review
-import { NextResponse } from 'next/server'
+import { type NextRequest } from 'next/server'
+import { updateSession } from '@/lib/supabase/middleware'
 
-export function middleware() {
-  return NextResponse.next()
+export async function middleware(request: NextRequest) {
+  return await updateSession(request)
 }
 
 export const config = {
-  matcher: [],
+  matcher: [
+    // Protected routes requiring auth + subscription
+    '/dashboard/:path*',
+    '/replay/:path*',
+    // Auth-required but not subscription-gated
+    '/onboarding/:path*',
+    '/pay/:path*',
+    // Login page (redirect if already authenticated)
+    '/login',
+  ],
 }
