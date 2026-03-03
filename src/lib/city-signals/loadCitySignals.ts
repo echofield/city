@@ -9,10 +9,13 @@ import * as fs from 'fs'
 import * as path from 'path'
 import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
 import { storageFetchJson, isStorageConfigured } from '@/lib/supabase/storageFetchJson'
+import type { BanlieueEvent } from './event-types'
+import { compileEventsForDate, mergePackWithRamifications } from './compileFromEvents'
 
 const STORAGE_BUCKET = 'flow-packs'
 const SIGNALS_DIR = path.join(process.cwd(), 'data', 'city-signals')
 const DAILY_DIR = path.join(SIGNALS_DIR, 'daily')
+const EVENTS_DIR = path.join(SIGNALS_DIR, 'events')
 
 /**
  * Get today's date in Europe/Paris timezone as YYYY-MM-DD
@@ -58,6 +61,90 @@ export async function loadCitySignals(date?: string): Promise<CitySignalsPackV1 
     if (diskPack) {
       console.log(`[loadCitySignals] Source: Local disk fallback`)
       return diskPack
+    }
+  }
+
+  // Events compilation fallback — try to compile from events calendar
+  const compiledPack = await loadAndCompileFromEvents(targetDate)
+  if (compiledPack) {
+    console.log(`[loadCitySignals] Source: Compiled from events calendar`)
+    return compiledPack
+  }
+
+  return null
+}
+
+/**
+ * Load events calendar and compile for the given date
+ */
+async function loadAndCompileFromEvents(targetDate: string): Promise<CitySignalsPackV1 | null> {
+  // Extract month for events file lookup (e.g., "2026-03")
+  const monthKey = targetDate.slice(0, 7)
+
+  // Try Supabase Storage first
+  if (isStorageConfigured()) {
+    try {
+      // Try month-specific events file
+      const eventsPath = `events/${monthKey}-events.json`
+      const events = await storageFetchJson<BanlieueEvent[]>(STORAGE_BUCKET, eventsPath)
+      if (events && events.length > 0) {
+        const { pack, ramifications } = compileEventsForDate(events, targetDate)
+        return mergePackWithRamifications(pack, ramifications) as CitySignalsPackV1
+      }
+
+      // Try generic banlieue events file
+      const genericPath = `events/banlieue-events.json`
+      const genericEvents = await storageFetchJson<BanlieueEvent[]>(STORAGE_BUCKET, genericPath)
+      if (genericEvents && genericEvents.length > 0) {
+        const { pack, ramifications } = compileEventsForDate(genericEvents, targetDate)
+        return mergePackWithRamifications(pack, ramifications) as CitySignalsPackV1
+      }
+    } catch (err) {
+      console.error('[loadCitySignals] Events compilation error:', err)
+    }
+  }
+
+  // Disk fallback for events (development only)
+  if (process.env.NODE_ENV === 'development') {
+    const events = loadEventsFromDisk(monthKey)
+    if (events && events.length > 0) {
+      const { pack, ramifications } = compileEventsForDate(events, targetDate)
+      console.log(`[loadCitySignals] Compiled ${pack.events.length} events, ${ramifications.length} ramifications`)
+      return mergePackWithRamifications(pack, ramifications) as CitySignalsPackV1
+    }
+  }
+
+  return null
+}
+
+/**
+ * Load events from local disk
+ */
+function loadEventsFromDisk(monthKey: string): BanlieueEvent[] | null {
+  // Ensure events directory exists
+  if (!fs.existsSync(EVENTS_DIR)) {
+    fs.mkdirSync(EVENTS_DIR, { recursive: true })
+  }
+
+  // Try month-specific file
+  const monthPath = path.join(EVENTS_DIR, `${monthKey}-events.json`)
+  if (fs.existsSync(monthPath)) {
+    try {
+      const raw = fs.readFileSync(monthPath, 'utf-8')
+      return JSON.parse(raw) as BanlieueEvent[]
+    } catch {
+      // fall through
+    }
+  }
+
+  // Try generic banlieue file
+  const genericPath = path.join(EVENTS_DIR, 'banlieue-events.json')
+  if (fs.existsSync(genericPath)) {
+    try {
+      const raw = fs.readFileSync(genericPath, 'utf-8')
+      return JSON.parse(raw) as BanlieueEvent[]
+    } catch {
+      // fall through
     }
   }
 

@@ -7,7 +7,8 @@
 
 import type { CompiledBrief } from '@/lib/prompts/contracts'
 import type { NextMove } from '@/lib/shift-conductor/contracts'
-import type { FlowState, ZoneStateApi, Ramification, WeeklySkeleton } from '@/types/flow-state'
+import type { FlowState, ZoneStateApi, Ramification, WeeklySkeleton, DriverPosition } from '@/types/flow-state'
+import { haversineMeters, estimateDriveMinutes, getZoneCentroid } from '@/lib/geo'
 
 /** Corridor directions (lowercase for frontend glossary compatibility) */
 const CORRIDOR_KEYS = ['est', 'nord', 'ouest', 'sud', 'centre'] as const
@@ -60,6 +61,13 @@ const ZONE_NAME_TO_TERRITORY_ID: Record<string, string> = {
 }
 
 const SHIFT_DURATION_SEC = 25 * 60 // 25 min arc for progress
+
+/** Format seconds as MM:SS string */
+function formatCountdown(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
 
 function energyToShiftPhase(energy: NextMove['energy']): FlowState['shiftPhase'] {
   switch (energy) {
@@ -274,6 +282,98 @@ function buildUpcoming(brief: CompiledBrief): FlowState['upcoming'] {
   }))
 }
 
+/** Zone name aliases to centroid IDs */
+const ZONE_NAME_ALIASES: Record<string, string> = {
+  // Gares
+  'gare du nord': 'gare-nord',
+  'gare de l\'est': 'gare-est',
+  'gare de lyon': 'gare-lyon',
+  'saint-lazare': 'saint-lazare',
+  'montparnasse': 'montparnasse',
+  // Portes → Banlieue
+  'porte de saint-cloud': 'boulogne',
+  'porte d\'auteuil': 'boulogne',
+  'porte de la chapelle': 'saint-denis',
+  'porte de bagnolet': 'pantin',
+  'porte de vincennes': 'vincennes',
+  'porte d\'orléans': 'ivry',
+  'porte de bercy': 'bercy',
+  'porte de montreuil': 'vincennes',
+  'porte d\'italie': 'ivry',
+  'porte maillot': 'defense',
+  // Venues
+  'accor arena': 'bercy',
+  'parc des princes': 'boulogne',
+  'stade de france': 'stade-france',
+  'la défense': 'defense',
+  'la defense': 'defense',
+  // Paris zones
+  'quartier latin': 'latin',
+  'grands boulevards': 'opera',
+  'les halles': 'chatelet',
+  'châtelet': 'chatelet',
+  'chatelet': 'chatelet',
+  'opéra': 'opera',
+  'opera': 'opera',
+  'trocadéro': 'trocadero',
+  'trocadero': 'trocadero',
+  'république': 'republique',
+  'republique': 'republique',
+  // Airports
+  'cdg': 'cdg',
+  'charles de gaulle': 'cdg',
+  'roissy': 'cdg',
+  'orly': 'orly',
+}
+
+/** Calculate distance and ETA from driver to a zone */
+function calculateDistanceToZone(
+  driverPos: DriverPosition,
+  zoneName: string
+): { distance_km: number; eta_min: number } | null {
+  const lowerName = zoneName.toLowerCase()
+
+  // Try alias first
+  const aliasId = ZONE_NAME_ALIASES[lowerName]
+  if (aliasId) {
+    const centroid = getZoneCentroid(aliasId)
+    if (centroid) {
+      const meters = haversineMeters(driverPos.lat, driverPos.lng, centroid.lat, centroid.lng)
+      return {
+        distance_km: Math.round(meters / 100) / 10,
+        eta_min: estimateDriveMinutes(meters),
+      }
+    }
+  }
+
+  // Try to find zone centroid by name (lowercase, hyphenated)
+  const zoneId = lowerName.replace(/['\s]/g, '-').replace(/--+/g, '-')
+  const centroid = getZoneCentroid(zoneId)
+
+  if (!centroid) {
+    // Try arrondissement number
+    const arrMatch = zoneName.match(/(\d+)(e|ème)?/i)
+    if (arrMatch) {
+      const arrNum = parseInt(arrMatch[1], 10)
+      const arrCentroid = getZoneCentroid(arrNum)
+      if (arrCentroid) {
+        const meters = haversineMeters(driverPos.lat, driverPos.lng, arrCentroid.lat, arrCentroid.lng)
+        return {
+          distance_km: Math.round(meters / 100) / 10, // 1 decimal
+          eta_min: estimateDriveMinutes(meters),
+        }
+      }
+    }
+    return null
+  }
+
+  const meters = haversineMeters(driverPos.lat, driverPos.lng, centroid.lat, centroid.lng)
+  return {
+    distance_km: Math.round(meters / 100) / 10,
+    eta_min: estimateDriveMinutes(meters),
+  }
+}
+
 /** Arrondissement label from zone name (simplified) */
 function zoneToArr(zone: string): string {
   const id = zoneNameToId(zone)
@@ -316,7 +416,8 @@ export function compiledBriefAndMoveToFlowState(
   move: NextMove,
   sessionStart?: number,
   ramifications?: Ramification[],
-  weeklySkeleton?: WeeklySkeleton | null
+  weeklySkeleton?: WeeklySkeleton | null,
+  driverPosition?: DriverPosition
 ): FlowState {
   const now = Date.now()
   const sessionStartMs = sessionStart ?? now - 10 * 60 * 1000
@@ -353,10 +454,29 @@ export function compiledBriefAndMoveToFlowState(
   ]
   const sessionEarnings = Math.round(earningsEstimate[0] * (sessionSeconds / 3600) * 10) / 10
 
+  // Build upcoming and peaks with optional distance enrichment
+  let upcoming = buildUpcoming(brief)
+  let peaks = parsePeaks(brief)
+
+  if (driverPosition) {
+    // Enrich upcoming with distances and sort by proximity
+    upcoming = upcoming.map((u) => {
+      const dist = calculateDistanceToZone(driverPosition, u.zone)
+      return dist ? { ...u, ...dist } : u
+    }).sort((a, b) => (a.distance_km ?? 999) - (b.distance_km ?? 999))
+
+    // Enrich peaks with distances
+    peaks = peaks.map((p) => {
+      const dist = calculateDistanceToZone(driverPosition, p.zone)
+      return dist ? { ...p, ...dist } : p
+    })
+  }
+
   return {
     windowState,
     windowLabel: windowStateToLabel(windowState),
     windowCountdownSec,
+    windowCountdown: formatCountdown(windowCountdownSec),
     windowMinutes,
     shiftPhase,
     shiftProgress,
@@ -375,14 +495,16 @@ export function compiledBriefAndMoveToFlowState(
     zoneHeat,
     zoneSaturation,
     zoneState,
+    zoneStates: zoneState, // alias for frontend compatibility
     earningsEstimate,
     sessionEarnings,
     signals: buildSignals(brief),
-    upcoming: buildUpcoming(brief),
-    peaks: parsePeaks(brief),
+    upcoming,
+    peaks,
     version: 1,
     generatedAt: new Date().toISOString(),
     ramifications: ramifications ?? [],
     weeklySkeleton: weeklySkeleton ?? null,
+    driverPosition,
   }
 }

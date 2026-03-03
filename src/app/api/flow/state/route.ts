@@ -7,10 +7,11 @@ import { orchestrate } from '@/lib/shift-conductor/orchestrator'
 import { compiledBriefAndMoveToFlowState, TERRITORY_IDS } from '@/lib/flow-engine/flow-state-adapter'
 import { compiledFromCitySignalsPackV1 } from '@/lib/flow-engine/compile-from-pack'
 import { buildDayTemplates } from '@/lib/flow-engine/day-templates'
+import { buildPrimaryAction, buildActiveFrictions, buildAlternatives, buildDriverContext } from '@/lib/flow-engine/primary-action-builder'
 import { loadCitySignals } from '@/lib/city-signals/loadCitySignals'
 import { loadWeeklySignals } from '@/lib/city-signals/loadWeeklySignals'
 import { normalizeCitySignalsPack } from '@/lib/city-signals/normalize-pack'
-import type { FlowState, Ramification } from '@/types/flow-state'
+import type { FlowState, Ramification, DriverPosition } from '@/types/flow-state'
 
 /** Deterministic mock FlowState for mock=1 */
 function getMockFlowState(sessionStart?: number): FlowState {
@@ -41,6 +42,7 @@ function getMockFlowState(sessionStart?: number): FlowState {
     windowState: 'active',
     windowLabel: 'FENETRE ACTIVE',
     windowCountdownSec: 420,
+    windowCountdown: '07:00',
     windowMinutes: 7,
     shiftPhase,
     shiftProgress: progress,
@@ -57,6 +59,7 @@ function getMockFlowState(sessionStart?: number): FlowState {
     zoneHeat,
     zoneSaturation,
     zoneState,
+    zoneStates: zoneState,
     earningsEstimate: [32, 48],
     sessionEarnings: 12.5,
     signals: [
@@ -86,6 +89,18 @@ export async function GET(request: Request) {
   const sessionStartParam = searchParams.get('sessionStart')
   const zone = searchParams.get('zone') ?? undefined
   const mock = searchParams.get('mock') === '1'
+
+  // Driver position for proximity calculations
+  const latParam = searchParams.get('lat')
+  const lngParam = searchParams.get('lng')
+  let driverPosition: DriverPosition | undefined
+  if (latParam && lngParam) {
+    const lat = parseFloat(latParam)
+    const lng = parseFloat(lngParam)
+    if (!isNaN(lat) && !isNaN(lng)) {
+      driverPosition = { lat, lng }
+    }
+  }
 
   const sessionStart = sessionStartParam
     ? Number(sessionStartParam)
@@ -131,8 +146,17 @@ export async function GET(request: Request) {
     },
   }
   const { move } = orchestrate(input)
-  const flowState = compiledBriefAndMoveToFlowState(brief, move, sessionStart, ramifications, weeklySkeleton)
+  const flowState = compiledBriefAndMoveToFlowState(brief, move, sessionStart, ramifications, weeklySkeleton, driverPosition)
   flowState.templates = buildDayTemplates(pack)
+
+  // Build structured action recommendations
+  const primaryAction = buildPrimaryAction(brief, ramifications, driverPosition)
+  if (primaryAction) {
+    flowState.primaryAction = primaryAction
+    flowState.alternativeActions = buildAlternatives(brief, primaryAction.zone, driverPosition)
+    flowState.driverContext = buildDriverContext(driverPosition, primaryAction.zone)
+  }
+  flowState.activeFrictions = buildActiveFrictions(brief, ramifications)
 
   return NextResponse.json(flowState, {
     headers: { 'Cache-Control': 'no-store' },

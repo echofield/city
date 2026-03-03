@@ -40,7 +40,7 @@ export const PARIS_ZONES: ZoneDefinition[] = [
     shortLabel: 'Nord',
     center: [540, 195],
     intensity: { nightlife: 0.3, business: 0.7, transit: 1.0, event: 0.3 },
-    neighbors: ['gare-est', 'opera', 'pigalle', 'republique'],
+    neighbors: ['gare-est', 'opera', 'pigalle', 'republique', 'saint-denis'],
     weight: 'major',
   },
   {
@@ -58,7 +58,7 @@ export const PARIS_ZONES: ZoneDefinition[] = [
     shortLabel: 'Lyon',
     center: [610, 420],
     intensity: { nightlife: 0.25, business: 0.8, transit: 1.0, event: 0.4 },
-    neighbors: ['bastille', 'bercy', 'nation'],
+    neighbors: ['bastille', 'bercy', 'nation', 'ivry'],
     weight: 'major',
   },
   {
@@ -133,15 +133,6 @@ export const PARIS_ZONES: ZoneDefinition[] = [
   // BUSINESS — Day peaks, corporate rhythm
   // ════════════════════════════════════════
   {
-    id: 'defense',
-    label: 'La Défense',
-    shortLabel: 'Défense',
-    center: [250, 260],
-    intensity: { nightlife: 0.1, business: 1.0, transit: 0.7, event: 0.4 },
-    neighbors: ['saint-lazare', 'champs'],
-    weight: 'major',
-  },
-  {
     id: 'opera',
     label: 'Opéra',
     shortLabel: 'Opéra',
@@ -178,7 +169,7 @@ export const PARIS_ZONES: ZoneDefinition[] = [
     shortLabel: 'Stade',
     center: [540, 100],
     intensity: { nightlife: 0.2, business: 0.2, transit: 0.5, event: 0.95 },
-    neighbors: ['gare-nord'],
+    neighbors: ['gare-nord', 'saint-denis'],
     weight: 'standard',
   },
 
@@ -218,7 +209,7 @@ export const PARIS_ZONES: ZoneDefinition[] = [
     shortLabel: 'Nation',
     center: [700, 390],
     intensity: { nightlife: 0.4, business: 0.5, transit: 0.6, event: 0.4 },
-    neighbors: ['bastille', 'gare-lyon', 'bercy'],
+    neighbors: ['bastille', 'gare-lyon', 'bercy', 'vincennes'],
     weight: 'standard',
   },
   {
@@ -247,6 +238,157 @@ export const PARIS_ZONES: ZoneDefinition[] = [
     intensity: { nightlife: 0.3, business: 0.6, transit: 0.4, event: 0.6 },
     neighbors: ['champs', 'invalides', 'defense'],
     weight: 'standard',
+  },
+
+  // ════════════════════════════════════════
+  // BANLIEUE 92 — Hauts-de-Seine (Ouest)
+  // ════════════════════════════════════════
+  {
+    id: 'defense',
+    label: 'La Défense',
+    shortLabel: 'Défense',
+    center: [180, 280],
+    intensity: { nightlife: 0.2, business: 1.0, transit: 0.8, event: 0.6 },
+    neighbors: ['saint-lazare', 'trocadero', 'nanterre'],
+    weight: 'major',
+  },
+  {
+    id: 'nanterre',
+    label: 'Nanterre',
+    shortLabel: 'Nant.',
+    center: [120, 260],
+    intensity: { nightlife: 0.2, business: 0.6, transit: 0.5, event: 0.8 },
+    neighbors: ['defense'],
+    weight: 'standard',
+  },
+  {
+    id: 'boulogne',
+    label: 'Boulogne-Billancourt',
+    shortLabel: 'Boulogne',
+    center: [200, 420],
+    intensity: { nightlife: 0.3, business: 0.7, transit: 0.4, event: 0.3 },
+    neighbors: ['trocadero', 'issy'],
+    weight: 'standard',
+  },
+  {
+    id: 'issy',
+    label: 'Issy-les-Moulineaux',
+    shortLabel: 'Issy',
+    center: [220, 500],
+    intensity: { nightlife: 0.2, business: 0.6, transit: 0.4, event: 0.3 },
+    neighbors: ['boulogne', 'montparnasse'],
+    weight: 'minor',
+  },
+
+  // ════════════════════════════════════════
+  // BANLIEUE 93 — Seine-Saint-Denis (Nord-Est)
+  // ════════════════════════════════════════
+  {
+    id: 'saint-denis',
+    label: 'Saint-Denis',
+    shortLabel: 'St-Denis',
+    center: [520, 80],
+    intensity: { nightlife: 0.3, business: 0.4, transit: 0.7, event: 0.9 },
+    neighbors: ['stade-france', 'gare-nord', 'aubervilliers'],
+    weight: 'standard',
+  },
+  {
+    id: 'aubervilliers',
+    label: 'Aubervilliers',
+    shortLabel: 'Auber.',
+    center: [580, 100],
+    intensity: { nightlife: 0.2, business: 0.3, transit: 0.5, event: 0.2 },
+    neighbors: ['saint-denis', 'pantin'],
+    weight: 'minor',
+  },
+  {
+    id: 'pantin',
+    label: 'Pantin',
+    shortLabel: 'Pantin',
+    center: [650, 150],
+    intensity: { nightlife: 0.4, business: 0.3, transit: 0.5, event: 0.3 },
+    neighbors: ['aubervilliers', 'belleville', 'bobigny'],
+    weight: 'minor',
+  },
+  {
+    id: 'bobigny',
+    label: 'Bobigny',
+    shortLabel: 'Bobigny',
+    center: [720, 120],
+    intensity: { nightlife: 0.1, business: 0.4, transit: 0.6, event: 0.2 },
+    neighbors: ['pantin', 'villepinte'],
+    weight: 'minor',
+  },
+  {
+    id: 'villepinte',
+    label: 'Villepinte',
+    shortLabel: 'Villep.',
+    center: [820, 60],
+    intensity: { nightlife: 0.1, business: 0.5, transit: 0.4, event: 0.95 },
+    neighbors: ['bobigny', 'cdg'],
+    weight: 'major',
+  },
+  {
+    id: 'le-bourget',
+    label: 'Le Bourget',
+    shortLabel: 'Bourget',
+    center: [620, 50],
+    intensity: { nightlife: 0.1, business: 0.4, transit: 0.3, event: 0.8 },
+    neighbors: ['saint-denis', 'villepinte'],
+    weight: 'standard',
+  },
+
+  // ════════════════════════════════════════
+  // BANLIEUE 94 — Val-de-Marne (Sud-Est)
+  // ════════════════════════════════════════
+  {
+    id: 'vincennes',
+    label: 'Vincennes',
+    shortLabel: 'Vincen.',
+    center: [760, 380],
+    intensity: { nightlife: 0.3, business: 0.4, transit: 0.5, event: 0.4 },
+    neighbors: ['nation', 'creteil'],
+    weight: 'standard',
+  },
+  {
+    id: 'creteil',
+    label: 'Créteil',
+    shortLabel: 'Créteil',
+    center: [780, 520],
+    intensity: { nightlife: 0.2, business: 0.5, transit: 0.6, event: 0.3 },
+    neighbors: ['vincennes', 'orly'],
+    weight: 'standard',
+  },
+  {
+    id: 'ivry',
+    label: 'Ivry-sur-Seine',
+    shortLabel: 'Ivry',
+    center: [620, 540],
+    intensity: { nightlife: 0.2, business: 0.4, transit: 0.4, event: 0.2 },
+    neighbors: ['gare-lyon', 'creteil'],
+    weight: 'minor',
+  },
+  {
+    id: 'orly',
+    label: 'Aéroport Orly',
+    shortLabel: 'Orly',
+    center: [500, 620],
+    intensity: { nightlife: 0.0, business: 0.9, transit: 0.8, event: 0.1 },
+    neighbors: ['creteil', 'ivry'],
+    weight: 'major',
+  },
+
+  // ════════════════════════════════════════
+  // BANLIEUE 95 — Val-d'Oise (Aéroport CDG)
+  // ════════════════════════════════════════
+  {
+    id: 'cdg',
+    label: 'Aéroport CDG',
+    shortLabel: 'CDG',
+    center: [750, -20],
+    intensity: { nightlife: 0.0, business: 1.0, transit: 0.9, event: 0.1 },
+    neighbors: ['villepinte', 'le-bourget'],
+    weight: 'major',
   },
 ]
 
