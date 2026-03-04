@@ -1,15 +1,18 @@
 // FLOW — Paris Map: Spatial Field Instrument
 // Green = active. Amber = forming. Gray = dormant.
 // Colors encode meaning. Every glow is information.
+// Tap zone → compact 5-line detail panel.
+// Banlieue hubs as directional indicators at edges.
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   TERRITORIES,
   SEINE_NORTH,
   SEINE_SOUTH,
+  BANLIEUE_HUBS,
 } from "./parisData";
-import type { ZoneState } from "./FlowEngine";
+import type { ZoneState, BanlieueHubState } from "./FlowEngine";
 
 interface FlowMapProps {
   zoneHeat: Record<string, number>;
@@ -21,16 +24,18 @@ interface FlowMapProps {
   compact?: boolean;
   selectedZoneIds?: string[];
   onZoneTap?: (id: string) => void;
+  driverPosition?: { lat: number; lng: number } | null;
+  driverCorridor?: string;
+  banlieueHubs?: Record<string, BanlieueHubState>;
 }
 
 // ── Color grammar ──
 const C = {
   bg: "#0a0a0b",
-  border: "#1a1a1e",
-  borderActive: "#2a2a30",
-  seine: "#0c1018",
-  seineBank: "#161e28",
-  // State colors
+  border: "#2a2a32",
+  borderActive: "#3e3e48",
+  seine: "#0e1420",
+  seineBank: "#253040",
   green: "#00B14F",
   greenDim: "#006830",
   greenGlow: "#00D460",
@@ -40,9 +45,10 @@ const C = {
   gray: "#3a3a40",
   grayDim: "#222226",
   red: "#a04040",
-  // Text
   textBright: "#d0cdc8",
+  textMid: "#8a8890",
   textDim: "#5a5a60",
+  textGhost: "#333338",
 };
 
 function getZoneColor(
@@ -64,6 +70,14 @@ function getZoneColor(
   }
 }
 
+function getHubColor(status: BanlieueHubState["status"]): string {
+  switch (status) {
+    case "active": return C.green;
+    case "forming": return C.amber;
+    case "dormant": return C.textGhost;
+  }
+}
+
 function buildSeinePath(): string {
   const n = SEINE_NORTH;
   const s = SEINE_SOUTH;
@@ -74,11 +88,7 @@ function buildSeinePath(): string {
 }
 
 function buildBridgeLines(): {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  key: string;
+  x1: number; y1: number; x2: number; y2: number; key: string;
 }[] {
   const lines: { x1: number; y1: number; x2: number; y2: number; key: string }[] = [];
   const seen = new Set<string>();
@@ -90,17 +100,35 @@ function buildBridgeLines(): {
       seen.add(key);
       const other = TERRITORIES.find((x) => x.id === nb.id);
       if (!other) continue;
-      lines.push({
-        x1: t.center[0],
-        y1: t.center[1],
-        x2: other.center[0],
-        y2: other.center[1],
-        key,
-      });
+      lines.push({ x1: t.center[0], y1: t.center[1], x2: other.center[0], y2: other.center[1], key });
     }
   }
   return lines;
 }
+
+// ── Zone axe mapping ──
+function getZoneCorridor(zoneId: string): string {
+  const corridorMap: Record<string, string> = {
+    "1": "Centre", "2": "Centre", "cite": "Centre", "stlouis": "Centre",
+    "3": "Est", "4": "Est", "11": "Est", "12": "Est", "20": "Est",
+    "5": "Sud", "6": "Sud", "13": "Sud", "14": "Sud",
+    "7": "Ouest", "8": "Ouest", "15": "Ouest", "16": "Ouest",
+    "9": "Nord", "10": "Nord", "17": "Nord", "18": "Nord", "19": "Nord",
+  };
+  return corridorMap[zoneId] ?? "—";
+}
+
+function getZoneStateLabel(state: ZoneState): string {
+  switch (state) {
+    case "peak": return "pic";
+    case "active": return "chaud";
+    case "forming": return "formation";
+    case "fading": return "tiede";
+    case "dormant": return "calme";
+  }
+}
+
+// ── Component ──
 
 export function FlowMap({
   zoneHeat,
@@ -112,24 +140,40 @@ export function FlowMap({
   compact = false,
   selectedZoneIds,
   onZoneTap,
+  driverPosition,
+  driverCorridor,
+  banlieueHubs,
 }: FlowMapProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [tappedId, setTappedId] = useState<string | null>(null);
 
   const seinePath = useMemo(buildSeinePath, []);
   const bridges = useMemo(buildBridgeLines, []);
   const favoredSet = useMemo(() => new Set(favoredZoneIds), [favoredZoneIds]);
   const selectedSet = useMemo(() => new Set(selectedZoneIds ?? []), [selectedZoneIds]);
 
-  const hovered = hoveredId
-    ? TERRITORIES.find((t) => t.id === hoveredId)
-    : null;
+  const tapped = tappedId ? TERRITORIES.find((t) => t.id === tappedId) : null;
+  const hovered = !tapped && hoveredId ? TERRITORIES.find((t) => t.id === hoveredId) : null;
 
   const seineOpacity = 0.45 + breathPhase * 0.15;
   const labelSize = compact ? "10px" : "13px";
   const smallLabelSize = compact ? "7px" : "9px";
 
+  const handleZoneClick = useCallback((id: string) => {
+    if (onZoneTap) {
+      onZoneTap(id);
+      return;
+    }
+    setTappedId((prev) => (prev === id ? null : id));
+  }, [onZoneTap]);
+
   return (
-    <div className="w-full h-full relative flex items-center justify-center overflow-hidden">
+    <div
+      className="w-full h-full relative flex items-center justify-center overflow-hidden"
+      onClick={(e) => {
+        if ((e.target as HTMLElement).tagName === "DIV") setTappedId(null);
+      }}
+    >
       <svg
         viewBox="155 95 690 555"
         className="w-full h-full"
@@ -158,50 +202,28 @@ export function FlowMap({
 
         {/* Peripherique */}
         <ellipse
-          cx="500"
-          cy="380"
-          rx="290"
-          ry="265"
-          fill="none"
-          stroke="#181820"
-          strokeWidth="0.5"
-          opacity={0.35 + breathPhase * 0.08}
-          strokeDasharray="3,6"
+          cx="500" cy="380" rx="290" ry="265"
+          fill="none" stroke="#252530" strokeWidth="0.8"
+          opacity={0.5 + breathPhase * 0.1}
+          strokeDasharray="4,5"
         />
 
         {/* Seine */}
-        <path
-          d={seinePath}
-          fill={C.seine}
-          opacity={seineOpacity}
-          style={{ transition: "opacity 0.6s ease" }}
-        />
+        <path d={seinePath} fill={C.seine} opacity={seineOpacity} style={{ transition: "opacity 0.6s ease" }} />
         <polyline
           points={SEINE_NORTH.map((p) => p.join(",")).join(" ")}
-          fill="none"
-          stroke={C.seineBank}
-          strokeWidth="0.7"
-          opacity={0.4 + breathPhase * 0.1}
+          fill="none" stroke={C.seineBank} strokeWidth="1.2" opacity={0.55 + breathPhase * 0.12}
         />
         <polyline
           points={SEINE_SOUTH.map((p) => p.join(",")).join(" ")}
-          fill="none"
-          stroke={C.seineBank}
-          strokeWidth="0.7"
-          opacity={0.4 + breathPhase * 0.1}
+          fill="none" stroke={C.seineBank} strokeWidth="1.2" opacity={0.55 + breathPhase * 0.12}
         />
 
         {/* Bridges */}
         {bridges.map((br) => (
           <line
-            key={br.key}
-            x1={br.x1}
-            y1={br.y1}
-            x2={br.x2}
-            y2={br.y2}
-            stroke="#1a1a22"
-            strokeWidth={0.4}
-            opacity={0.15 + breathPhase * 0.05}
+            key={br.key} x1={br.x1} y1={br.y1} x2={br.x2} y2={br.y2}
+            stroke="#22222e" strokeWidth={0.6} opacity={0.25 + breathPhase * 0.08}
             strokeDasharray="2,3"
           />
         ))}
@@ -215,77 +237,60 @@ export function FlowMap({
           const isFavored = favoredSet.has(t.id);
           const isSelected = selectedSet.has(t.id);
           const isHovered = hoveredId === t.id;
+          const isTapped = tappedId === t.id;
           const breathPulse = isFavored ? breathPhase * 0.06 : breathPhase * 0.015;
-
-          // Saturation indicator — if saturated, dim the zone slightly
           const satDim = sat > 70 ? 0.08 : 0;
 
-          // Label color based on state
           const labelColor =
-            isSelected
+            isSelected || isTapped
               ? C.green
               : state === "active" || state === "peak"
-                ? "#5a8a60"
+                ? "#6aa070"
                 : state === "forming"
-                  ? "#8a7a50"
+                  ? "#9a8a55"
                   : isHovered
-                    ? "#4a4a50"
-                    : "#222228";
+                    ? "#555560"
+                    : "#35353e";
 
           return (
             <g key={t.id}>
               {opacity > 0 && (
                 <path
-                  d={t.path}
-                  fill={fill}
+                  d={t.path} fill={fill}
                   opacity={Math.min(0.95, Math.max(0, opacity + breathPulse - satDim))}
                   style={{ transition: "fill 0.8s ease, opacity 0.5s ease" }}
                   filter={glow ? "url(#fglow)" : heat > 0.2 ? "url(#fsoft)" : undefined}
                 />
               )}
-
-              {/* Border */}
               <path
-                d={t.path}
-                fill="transparent"
-                stroke={isSelected ? C.green : isHovered ? C.borderActive : C.border}
-                strokeWidth={isSelected ? 1.2 : isHovered ? 0.8 : 0.35}
+                d={t.path} fill="transparent"
+                stroke={isSelected || isTapped ? C.green : isHovered ? C.borderActive : C.border}
+                strokeWidth={isSelected || isTapped ? 1.5 : isHovered ? 1 : 0.6}
                 style={{
-                  cursor: onZoneTap ? "pointer" : "default",
+                  cursor: "pointer",
                   transition: "stroke 0.3s ease, stroke-width 0.3s ease",
                 }}
                 onMouseEnter={() => setHoveredId(t.id)}
                 onMouseLeave={() => setHoveredId(null)}
-                onClick={() => onZoneTap?.(t.id)}
+                onClick={(e) => { e.stopPropagation(); handleZoneClick(t.id); }}
               />
-
-              {/* Territory label */}
               <text
-                x={t.center[0]}
-                y={t.center[1]}
-                textAnchor="middle"
-                dominantBaseline="central"
+                x={t.center[0]} y={t.center[1]}
+                textAnchor="middle" dominantBaseline="central"
                 fill={labelColor}
                 style={{
                   fontFamily: "'Inter', sans-serif",
                   fontSize: t.id === "cite" || t.id === "stlouis" ? smallLabelSize : labelSize,
-                  fontWeight: 400,
-                  pointerEvents: "none",
-                  transition: "fill 0.5s ease",
-                  letterSpacing: "0.05em",
+                  fontWeight: 500, pointerEvents: "none",
+                  transition: "fill 0.5s ease", letterSpacing: "0.06em",
                 }}
               >
                 {t.displayName}
               </text>
-
-              {/* Saturation dot — high saturation zones get a red dot */}
               {sat > 65 && (
                 <circle
-                  cx={t.center[0] + 14}
-                  cy={t.center[1] - 10}
-                  r={2.5}
-                  fill={C.red}
-                  opacity={0.6 + breathPhase * 0.2}
+                  cx={t.center[0] + 14} cy={t.center[1] - 10}
+                  r={2.5} fill={C.red} opacity={0.6 + breathPhase * 0.2}
                 />
               )}
             </g>
@@ -293,30 +298,222 @@ export function FlowMap({
         })}
 
         {/* Center meridian */}
-        <line
-          x1="500"
-          y1="115"
-          x2="500"
-          y2="630"
-          stroke="#151518"
-          strokeWidth="0.3"
-          opacity={0.12}
-          strokeDasharray="3,7"
-        />
+        <line x1="500" y1="115" x2="500" y2="630" stroke="#1a1a22" strokeWidth="0.4" opacity={0.18} strokeDasharray="3,7" />
+
+        {/* Axe direction labels */}
+        <text x="500" y="108" textAnchor="middle" fill="#4a4a55" style={{ fontFamily: "'Inter', sans-serif", fontSize: "9px", fontWeight: 500, letterSpacing: "0.3em" }}>NORD</text>
+        <text x="500" y="648" textAnchor="middle" fill="#4a4a55" style={{ fontFamily: "'Inter', sans-serif", fontSize: "9px", fontWeight: 500, letterSpacing: "0.3em" }}>SUD</text>
+        <text x="165" y="375" textAnchor="middle" fill="#4a4a55" style={{ fontFamily: "'Inter', sans-serif", fontSize: "9px", fontWeight: 500, letterSpacing: "0.3em" }} transform="rotate(-90, 165, 375)">OUEST</text>
+        <text x="835" y="375" textAnchor="middle" fill="#4a4a55" style={{ fontFamily: "'Inter', sans-serif", fontSize: "9px", fontWeight: 500, letterSpacing: "0.3em" }} transform="rotate(90, 835, 375)">EST</text>
+
+        {/* ── Banlieue Hub Indicators ── */}
+        {BANLIEUE_HUBS.map((hub) => {
+          const hubState = banlieueHubs?.[hub.id];
+          const color = hubState ? getHubColor(hubState.status) : C.textGhost;
+          const isActive = hubState?.status === "active";
+          const [hx, hy] = hub.edgePos;
+
+          const isVert = hub.corridor === "nord" || hub.corridor === "sud";
+          const anchor = isVert ? "middle" : hub.corridor === "ouest" ? "start" : "end";
+          const textX = isVert ? hx : hub.corridor === "ouest" ? hx + 12 : hx - 12;
+          const textY = isVert ? (hub.corridor === "nord" ? hy - 8 : hy + 10) : hy;
+
+          return (
+            <g key={hub.id}>
+              <circle cx={hx} cy={hy} r={isActive ? 4 : 2.5} fill={color} opacity={isActive ? 0.9 : 0.5} />
+              {isActive && (
+                <circle
+                  cx={hx} cy={hy} r={7}
+                  fill="none" stroke={color} strokeWidth={0.6}
+                  opacity={0.4 + breathPhase * 0.25}
+                />
+              )}
+              <text
+                x={textX} y={textY}
+                textAnchor={anchor}
+                dominantBaseline="central"
+                fill={color}
+                style={{
+                  fontFamily: "'Inter', sans-serif",
+                  fontSize: "7px",
+                  fontWeight: 500,
+                  letterSpacing: "0.12em",
+                  opacity: isActive ? 1 : 0.5,
+                  transition: "opacity 0.5s ease",
+                }}
+              >
+                {hub.name.toUpperCase()}
+              </text>
+              {hubState?.nextPic && isActive && (
+                <text
+                  x={textX}
+                  y={textY + (isVert ? (hub.corridor === "nord" ? -8 : 9) : 9)}
+                  textAnchor={anchor}
+                  dominantBaseline="central"
+                  fill={color}
+                  style={{
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: "5.5px",
+                    fontWeight: 400,
+                    opacity: 0.7,
+                  }}
+                >
+                  {hubState.nextPic}
+                </text>
+              )}
+            </g>
+          );
+        })}
+
+        {/* Driver position marker */}
+        {driverPosition && (() => {
+          const svgX = 155 + ((driverPosition.lng - 2.224) / (2.420 - 2.224)) * 690;
+          const svgY = 95 + ((48.902 - driverPosition.lat) / (48.902 - 48.815)) * 555;
+          const pulseR = 6 + breathPhase * 3;
+          return (
+            <g>
+              <circle cx={svgX} cy={svgY} r={pulseR} fill="none" stroke={C.green} strokeWidth={0.8} opacity={0.3 + breathPhase * 0.2} />
+              <circle cx={svgX} cy={svgY} r={4} fill={C.green} opacity={0.9} filter="url(#fglow)" />
+              <circle cx={svgX} cy={svgY} r={1.5} fill="#ffffff" opacity={0.8} />
+            </g>
+          );
+        })()}
       </svg>
 
-      {/* Hover tooltip */}
+      {/* ── Zone Detail Panel (tap) ── */}
       <AnimatePresence>
-        {hovered && (
+        {tapped && (
+          <motion.div
+            className="absolute bottom-3 left-3 right-3 pointer-events-auto"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.15 }}
+          >
+            <div
+              className="flex flex-col gap-1 px-4 py-3"
+              style={{
+                backgroundColor: "rgba(10, 10, 11, 0.96)",
+                border: `1px solid ${C.border}`,
+                borderRadius: "3px",
+              }}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-baseline gap-2">
+                  <span
+                    className="uppercase tracking-[0.2em]"
+                    style={{
+                      fontFamily: "'Inter', sans-serif",
+                      fontSize: "0.8rem",
+                      fontWeight: 500,
+                      color: C.textBright,
+                    }}
+                  >
+                    {tapped.displayName}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: "'Inter', sans-serif",
+                      fontSize: "0.55rem",
+                      fontWeight: 300,
+                      color: C.textDim,
+                    }}
+                  >
+                    {tapped.subtitle}
+                  </span>
+                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setTappedId(null); }}
+                  style={{
+                    fontFamily: "'Inter', sans-serif",
+                    fontSize: "0.5rem",
+                    color: C.textDim,
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: "2px 6px",
+                  }}
+                >
+                  x
+                </button>
+              </div>
+
+              {[
+                {
+                  label: "Etat",
+                  value: getZoneStateLabel(zoneStates[tapped.id] ?? "dormant"),
+                  color: (zoneStates[tapped.id] === "active" || zoneStates[tapped.id] === "peak")
+                    ? C.green
+                    : zoneStates[tapped.id] === "forming"
+                      ? C.amber
+                      : C.textDim,
+                },
+                {
+                  label: "Saturation",
+                  value: `${zoneSaturation[tapped.id] ?? 0}`,
+                  color: (zoneSaturation[tapped.id] ?? 0) > 65
+                    ? C.red
+                    : (zoneSaturation[tapped.id] ?? 0) > 40
+                      ? C.amber
+                      : C.textMid,
+                },
+                {
+                  label: "Axe",
+                  value: getZoneCorridor(tapped.id),
+                  color: C.textMid,
+                },
+                {
+                  label: "Intensite",
+                  value: `${Math.round((zoneHeat[tapped.id] ?? 0) * 100)}%`,
+                  color: (zoneHeat[tapped.id] ?? 0) > 0.5 ? C.green : (zoneHeat[tapped.id] ?? 0) > 0.2 ? C.amber : C.textDim,
+                },
+                {
+                  label: "Densite",
+                  value: `${Math.round(tapped.density * 100)}%`,
+                  color: C.textDim,
+                },
+              ].map((row) => (
+                <div key={row.label} className="flex items-center justify-between py-0.5">
+                  <span
+                    style={{
+                      fontFamily: "'Inter', sans-serif",
+                      fontSize: "0.55rem",
+                      fontWeight: 300,
+                      color: C.textDim,
+                    }}
+                  >
+                    {row.label}
+                  </span>
+                  <span
+                    className="uppercase tracking-[0.1em]"
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: "0.55rem",
+                      fontWeight: 400,
+                      color: row.color,
+                    }}
+                  >
+                    {row.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Hover tooltip ── */}
+      <AnimatePresence>
+        {hovered && !tapped && (
           <motion.div
             className="absolute bottom-3 left-1/2 -translate-x-1/2 pointer-events-none"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 4 }}
-            transition={{ duration: 0.25 }}
+            transition={{ duration: 0.2 }}
           >
             <div
-              className="flex items-center gap-4 px-5 py-2.5"
+              className="flex items-center gap-4 px-5 py-2"
               style={{
                 backgroundColor: "rgba(10, 10, 11, 0.95)",
                 border: "1px solid #222228",
@@ -326,22 +523,12 @@ export function FlowMap({
               <div className="flex flex-col gap-0.5">
                 <span
                   className="uppercase tracking-[0.25em]"
-                  style={{
-                    fontFamily: "'Inter', sans-serif",
-                    fontSize: "0.7rem",
-                    fontWeight: 400,
-                    color: C.textBright,
-                  }}
+                  style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.7rem", fontWeight: 400, color: C.textBright }}
                 >
                   {hovered.name}
                 </span>
                 <span
-                  style={{
-                    fontFamily: "'Inter', sans-serif",
-                    fontSize: "0.6rem",
-                    fontWeight: 300,
-                    color: C.textDim,
-                  }}
+                  style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.55rem", fontWeight: 300, color: C.textDim }}
                 >
                   {hovered.subtitle}
                 </span>

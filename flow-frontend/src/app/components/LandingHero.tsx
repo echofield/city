@@ -156,14 +156,42 @@ export function LandingHero() {
           >
             Flow indique quand attendre, quand bouger.
           </p>
-          <button
-            type="button"
-            onClick={handleEnter}
-            className="uppercase tracking-[0.2em] text-sm font-medium transition-opacity hover:opacity-80"
-            style={{ color: C.text, background: "none", border: "none", cursor: "pointer" }}
-          >
-            Entrer →
-          </button>
+          <div className="flex flex-col sm:flex-row gap-4 items-center">
+            <button
+              type="button"
+              onClick={() => {
+                setExiting(true);
+                setTimeout(() => navigate("/onboarding"), 500);
+              }}
+              className="uppercase tracking-[0.2em] text-sm font-medium px-8 py-3 transition-all hover:opacity-90"
+              style={{
+                color: C.text,
+                backgroundColor: "rgba(0, 177, 79, 0.15)",
+                border: `1px solid ${C.green}`,
+                borderRadius: "3px",
+                cursor: "pointer",
+              }}
+            >
+              Simuler
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setExiting(true);
+                setTimeout(() => navigate("/activate"), 500);
+              }}
+              className="uppercase tracking-[0.2em] text-sm font-medium px-8 py-3 transition-all hover:opacity-90"
+              style={{
+                color: "#0a0a0b",
+                backgroundColor: C.green,
+                border: "none",
+                borderRadius: "3px",
+                cursor: "pointer",
+              }}
+            >
+              Activer LIVE
+            </button>
+          </div>
         </div>
       </div>
 

@@ -459,3 +459,56 @@ export const TERRITORIES: TerritoryDef[] = [
     riverEdge: true,
   },
 ];
+
+// ── Banlieue Hubs ──
+// Key suburban pickup/dropoff points at edges of Paris
+
+export interface BanlieueHub {
+  id: string;
+  name: string;
+  corridor: "nord" | "est" | "sud" | "ouest";
+  edgePos: [number, number]; // SVG position at map edge
+}
+
+export const BANLIEUE_HUBS: BanlieueHub[] = [
+  // Nord
+  {
+    id: "saint-denis",
+    name: "Saint-Denis",
+    corridor: "nord",
+    edgePos: [400, 102],
+  },
+  {
+    id: "villepinte",
+    name: "Villepinte",
+    corridor: "nord",
+    edgePos: [500, 102],
+  },
+  {
+    id: "cdg",
+    name: "CDG",
+    corridor: "nord",
+    edgePos: [600, 102],
+  },
+  // Ouest
+  {
+    id: "la-defense",
+    name: "La Defense",
+    corridor: "ouest",
+    edgePos: [168, 280],
+  },
+  // Sud
+  {
+    id: "orly",
+    name: "Orly",
+    corridor: "sud",
+    edgePos: [500, 640],
+  },
+  // Est
+  {
+    id: "montreuil",
+    name: "Montreuil",
+    corridor: "est",
+    edgePos: [832, 380],
+  },
+];

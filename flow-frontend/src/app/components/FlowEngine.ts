@@ -10,6 +10,14 @@ export type WindowState = "forming" | "active" | "closing" | "stable";
 export type ShiftPhase = "calme" | "montee" | "pic" | "dispersion";
 export type ActionType = "hold" | "prepare" | "move" | "rest";
 
+export interface BanlieueHubState {
+  id: string;
+  heat: number;
+  status: "dormant" | "forming" | "active";
+  nextPic?: string;
+  corridor: "nord" | "est" | "sud" | "ouest";
+}
+
 export interface ContextSignal {
   text: string;
   type: "event" | "weather" | "transport" | "surge";
