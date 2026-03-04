@@ -311,23 +311,72 @@ export function FlowMap({
           const hubState = banlieueHubs?.[hub.id];
           const color = hubState ? getHubColor(hubState.status) : C.textGhost;
           const isActive = hubState?.status === "active";
+          const isForming = hubState?.status === "forming";
           const [hx, hy] = hub.edgePos;
 
           const isVert = hub.corridor === "nord" || hub.corridor === "sud";
           const anchor = isVert ? "middle" : hub.corridor === "ouest" ? "start" : "end";
-          const textX = isVert ? hx : hub.corridor === "ouest" ? hx + 12 : hx - 12;
-          const textY = isVert ? (hub.corridor === "nord" ? hy - 8 : hy + 10) : hy;
+          const textX = isVert ? hx : hub.corridor === "ouest" ? hx + 14 : hx - 14;
+          const textY = isVert ? (hub.corridor === "nord" ? hy - 10 : hy + 12) : hy;
+
+          // Corridor label position
+          const corridorLabel = hub.corridor.toUpperCase();
+          const corridorY = isVert
+            ? (hub.corridor === "nord" ? textY - 10 : textY + 10)
+            : textY + 10;
+
+          // Time position (above name if showing)
+          const timeY = isVert
+            ? (hub.corridor === "nord" ? textY + 10 : textY - 10)
+            : textY - 10;
 
           return (
             <g key={hub.id}>
-              <circle cx={hx} cy={hy} r={isActive ? 4 : 2.5} fill={color} opacity={isActive ? 0.9 : 0.5} />
+              {/* Outer glow ring for active hubs */}
               {isActive && (
-                <circle
-                  cx={hx} cy={hy} r={7}
-                  fill="none" stroke={color} strokeWidth={0.6}
-                  opacity={0.4 + breathPhase * 0.25}
-                />
+                <>
+                  <circle
+                    cx={hx} cy={hy} r={12}
+                    fill="none" stroke={color} strokeWidth={0.4}
+                    opacity={0.15 + breathPhase * 0.1}
+                  />
+                  <circle
+                    cx={hx} cy={hy} r={8}
+                    fill="none" stroke={color} strokeWidth={0.6}
+                    opacity={0.3 + breathPhase * 0.2}
+                  />
+                </>
               )}
+              {/* Inner dot */}
+              <circle
+                cx={hx} cy={hy}
+                r={isActive ? 5 : isForming ? 3.5 : 2.5}
+                fill={color}
+                opacity={isActive ? 0.95 : isForming ? 0.7 : 0.4}
+                filter={isActive ? "url(#fglow)" : undefined}
+              />
+              {isActive && (
+                <circle cx={hx} cy={hy} r={2} fill="#ffffff" opacity={0.6} />
+              )}
+
+              {/* Corridor label (small, dim) */}
+              <text
+                x={textX} y={corridorY}
+                textAnchor={anchor}
+                dominantBaseline="central"
+                fill={isActive ? color : C.textGhost}
+                style={{
+                  fontFamily: "'Inter', sans-serif",
+                  fontSize: "5px",
+                  fontWeight: 400,
+                  letterSpacing: "0.25em",
+                  opacity: isActive ? 0.8 : 0.4,
+                }}
+              >
+                {corridorLabel}
+              </text>
+
+              {/* Hub name */}
               <text
                 x={textX} y={textY}
                 textAnchor={anchor}
@@ -335,27 +384,29 @@ export function FlowMap({
                 fill={color}
                 style={{
                   fontFamily: "'Inter', sans-serif",
-                  fontSize: "7px",
-                  fontWeight: 500,
-                  letterSpacing: "0.12em",
+                  fontSize: isActive ? "8px" : "7px",
+                  fontWeight: isActive ? 600 : 500,
+                  letterSpacing: "0.1em",
                   opacity: isActive ? 1 : 0.5,
-                  transition: "opacity 0.5s ease",
+                  transition: "all 0.5s ease",
                 }}
               >
                 {hub.name.toUpperCase()}
               </text>
-              {hubState?.nextPic && isActive && (
+
+              {/* Time indicator (when available) */}
+              {hubState?.nextPic && (isActive || isForming) && (
                 <text
                   x={textX}
-                  y={textY + (isVert ? (hub.corridor === "nord" ? -8 : 9) : 9)}
+                  y={timeY}
                   textAnchor={anchor}
                   dominantBaseline="central"
                   fill={color}
                   style={{
                     fontFamily: "'JetBrains Mono', monospace",
-                    fontSize: "5.5px",
+                    fontSize: "6px",
                     fontWeight: 400,
-                    opacity: 0.7,
+                    opacity: isActive ? 0.9 : 0.6,
                   }}
                 >
                   {hubState.nextPic}

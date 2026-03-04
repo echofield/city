@@ -1,12 +1,12 @@
 // FLOW — Reactive Onboarding
 // The system is alive from the first tap.
-// 3 steps: Shift type, Zones, Style. Map reacts immediately.
+// Intro splash → 3 steps: Shift type, Zones, Style → Summary
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useNavigate } from "react-router";
 import { FlowMap } from "./FlowMap";
-import { TERRITORIES } from "./parisData";
+import { TERRITORIES, BANLIEUE_HUBS } from "./parisData";
 import { C, label, mono } from "./theme";
 import type { ZoneState } from "./FlowEngine";
 
@@ -16,11 +16,25 @@ type ShiftType = "jour" | "nuit" | "nuit_profonde";
 type DrivingStyle = "attendre" | "chasser" | "equilibre";
 
 interface OnboardingState {
-  step: number; // 0, 1, 2
+  showIntro: boolean; // Intro splash
+  step: number; // 0, 1, 2, 3 (3 = summary)
   shiftType: ShiftType | null;
   selectedZones: string[];
+  selectedHubs: string[];
   style: DrivingStyle | null;
 }
+
+const SHIFT_LABELS: Record<ShiftType, string> = {
+  jour: "JOUR",
+  nuit: "NUIT",
+  nuit_profonde: "NUIT PROFONDE",
+};
+
+const STYLE_LABELS: Record<DrivingStyle, string> = {
+  attendre: "ATTENDRE",
+  chasser: "CHASSER",
+  equilibre: "EQUILIBRE",
+};
 
 // ── Simulated map state based on onboarding choices ──
 
@@ -39,7 +53,6 @@ function buildOnboardingHeat(
   const zoneSaturation: Record<string, number> = {};
   const selectedSet = new Set(selectedZones);
 
-  // Night corridors — different zones light up based on shift type
   const nightZones = new Set(["11", "18", "9", "10", "3", "4", "20"]);
   const dayZones = new Set(["8", "16", "1", "7", "6", "2", "9"]);
   const deepNightZones = new Set(["18", "11", "20", "10", "19", "3"]);
@@ -88,13 +101,25 @@ function buildOnboardingHeat(
 export function Onboarding() {
   const navigate = useNavigate();
   const [state, setState] = useState<OnboardingState>({
+    showIntro: true,
     step: 0,
     shiftType: null,
     selectedZones: [],
+    selectedHubs: [],
     style: null,
   });
   const [breathPhase, setBreathPhase] = useState(0);
   const animRef = useRef(0);
+
+  // Intro splash timer (2.2s)
+  useEffect(() => {
+    if (state.showIntro) {
+      const timer = setTimeout(() => {
+        setState((prev) => ({ ...prev, showIntro: false }));
+      }, 2200);
+      return () => clearTimeout(timer);
+    }
+  }, [state.showIntro]);
 
   useEffect(() => {
     let t = 0;
@@ -113,13 +138,24 @@ export function Onboarding() {
     breathPhase
   );
 
+  // Build hub states for display
+  const hubStates = BANLIEUE_HUBS.reduce((acc, hub) => {
+    acc[hub.id] = {
+      id: hub.id,
+      heat: state.selectedHubs.includes(hub.id) ? 0.8 : 0.2,
+      status: state.selectedHubs.includes(hub.id) ? "active" as const : "dormant" as const,
+      corridor: hub.corridor,
+    };
+    return acc;
+  }, {} as Record<string, { id: string; heat: number; status: "dormant" | "forming" | "active"; corridor: "nord" | "est" | "sud" | "ouest" }>);
+
   const handleZoneTap = useCallback(
     (id: string) => {
       if (state.step !== 1) return;
       setState((prev) => {
         const zones = prev.selectedZones.includes(id)
           ? prev.selectedZones.filter((z) => z !== id)
-          : prev.selectedZones.length < 5
+          : prev.selectedZones.length + prev.selectedHubs.length < 5
             ? [...prev.selectedZones, id]
             : prev.selectedZones;
         return { ...prev, selectedZones: zones };
@@ -128,19 +164,35 @@ export function Onboarding() {
     [state.step]
   );
 
+  const handleHubTap = (hubId: string) => {
+    if (state.step !== 1) return;
+    setState((prev) => {
+      const hubs = prev.selectedHubs.includes(hubId)
+        ? prev.selectedHubs.filter((h) => h !== hubId)
+        : prev.selectedZones.length + prev.selectedHubs.length < 5
+          ? [...prev.selectedHubs, hubId]
+          : prev.selectedHubs;
+      return { ...prev, selectedHubs: hubs };
+    });
+  };
+
+  const totalSelected = state.selectedZones.length + state.selectedHubs.length;
+
   const canAdvance =
     (state.step === 0 && state.shiftType !== null) ||
-    (state.step === 1 && state.selectedZones.length >= 1) ||
-    (state.step === 2 && state.style !== null);
+    (state.step === 1 && totalSelected >= 1) ||
+    (state.step === 2 && state.style !== null) ||
+    state.step === 3;
 
   const advance = () => {
-    if (state.step < 2) {
+    if (state.step < 3) {
       setState((prev) => ({ ...prev, step: prev.step + 1 }));
     } else {
-      // Save preferences and navigate to dashboard
+      // Save preferences and navigate
       const prefs = {
         shiftType: state.shiftType,
         zones: state.selectedZones,
+        hubs: state.selectedHubs,
         style: state.style,
         startedAt: Date.now(),
       };
@@ -154,6 +206,56 @@ export function Onboarding() {
       setState((prev) => ({ ...prev, step: prev.step - 1 }));
     }
   };
+
+  // ── Intro splash screen ──
+  if (state.showIntro) {
+    return (
+      <motion.div
+        className="h-screen w-screen flex flex-col items-center justify-center"
+        style={{ backgroundColor: C.bg }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.5 }}
+      >
+        <motion.div
+          className="flex flex-col items-center gap-4"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3, duration: 0.6 }}
+        >
+          <h1
+            className="uppercase tracking-[0.5em] text-xl sm:text-2xl"
+            style={{
+              fontFamily: "'Inter', sans-serif",
+              fontWeight: 300,
+              color: C.text,
+            }}
+          >
+            F L O W
+          </h1>
+          <div
+            style={{
+              width: 40,
+              height: 1,
+              backgroundColor: C.textGhost,
+            }}
+          />
+          <p
+            style={{
+              fontFamily: "'Inter', sans-serif",
+              fontSize: "1rem",
+              fontWeight: 300,
+              color: C.textDim,
+              letterSpacing: "0.02em",
+            }}
+          >
+            Sais ou aller. Avant les autres.
+          </p>
+        </motion.div>
+      </motion.div>
+    );
+  }
 
   return (
     <div
@@ -176,11 +278,12 @@ export function Onboarding() {
           windowState="stable"
           selectedZoneIds={state.selectedZones}
           onZoneTap={state.step === 1 ? handleZoneTap : undefined}
+          banlieueHubs={hubStates}
         />
 
         {/* Step indicator on map */}
         <div className="absolute top-4 left-4 flex items-center gap-2">
-          {[0, 1, 2].map((i) => (
+          {[0, 1, 2, 3].map((i) => (
             <div
               key={i}
               style={{
@@ -311,39 +414,103 @@ export function Onboarding() {
 
                 {/* Selected zones display */}
                 <div className="flex flex-wrap gap-2">
-                  {state.selectedZones.length === 0 ? (
+                  {totalSelected === 0 ? (
                     <span style={{ ...label, fontSize: "0.7rem", color: C.textGhost }}>
                       Touche une zone sur la carte...
                     </span>
                   ) : (
-                    state.selectedZones.map((zid) => {
-                      const t = TERRITORIES.find((x) => x.id === zid);
-                      return (
-                        <motion.button
-                          key={zid}
-                          initial={{ scale: 0.8, opacity: 0 }}
-                          animate={{ scale: 1, opacity: 1 }}
-                          exit={{ scale: 0.8, opacity: 0 }}
-                          className="flex items-center gap-2 px-3 py-1.5"
-                          style={{
-                            backgroundColor: `${C.green}15`,
-                            border: `1px solid ${C.greenDim}`,
-                            borderRadius: 3,
-                            cursor: "pointer",
-                          }}
-                          onClick={() => handleZoneTap(zid)}
-                        >
-                          <span style={{ ...label, fontSize: "0.7rem", color: C.green }}>
-                            {t?.name ?? zid}
-                          </span>
-                          <span style={{ ...mono, fontSize: "0.55rem", color: C.textDim }}>
-                            {t?.subtitle?.split(" · ")[0] ?? ""}
-                          </span>
-                          <span style={{ color: C.textDim, fontSize: "0.6rem" }}>x</span>
-                        </motion.button>
-                      );
-                    })
+                    <>
+                      {state.selectedZones.map((zid) => {
+                        const t = TERRITORIES.find((x) => x.id === zid);
+                        return (
+                          <motion.button
+                            key={zid}
+                            initial={{ scale: 0.8, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.8, opacity: 0 }}
+                            className="flex items-center gap-2 px-3 py-1.5"
+                            style={{
+                              backgroundColor: `${C.green}15`,
+                              border: `1px solid ${C.greenDim}`,
+                              borderRadius: 3,
+                              cursor: "pointer",
+                            }}
+                            onClick={() => handleZoneTap(zid)}
+                          >
+                            <span style={{ ...label, fontSize: "0.7rem", color: C.green }}>
+                              {t?.name ?? zid}
+                            </span>
+                            <span style={{ color: C.textDim, fontSize: "0.6rem" }}>x</span>
+                          </motion.button>
+                        );
+                      })}
+                      {state.selectedHubs.map((hid) => {
+                        const h = BANLIEUE_HUBS.find((x) => x.id === hid);
+                        return (
+                          <motion.button
+                            key={hid}
+                            initial={{ scale: 0.8, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.8, opacity: 0 }}
+                            className="flex items-center gap-2 px-3 py-1.5"
+                            style={{
+                              backgroundColor: `${C.green}15`,
+                              border: `1px solid ${C.greenDim}`,
+                              borderRadius: 3,
+                              cursor: "pointer",
+                            }}
+                            onClick={() => handleHubTap(hid)}
+                          >
+                            <span style={{ ...label, fontSize: "0.7rem", color: C.green }}>
+                              {h?.name ?? hid}
+                            </span>
+                            <span style={{ ...mono, fontSize: "0.55rem", color: C.textDim }}>
+                              banlieue
+                            </span>
+                            <span style={{ color: C.textDim, fontSize: "0.6rem" }}>x</span>
+                          </motion.button>
+                        );
+                      })}
+                    </>
                   )}
+                </div>
+
+                {/* Banlieue hubs selection */}
+                <div className="flex flex-col gap-2">
+                  <span style={{ ...label, fontSize: "0.65rem", color: C.textDim, letterSpacing: "0.15em" }}>
+                    BANLIEUE
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {BANLIEUE_HUBS.map((hub) => {
+                      const selected = state.selectedHubs.includes(hub.id);
+                      return (
+                        <button
+                          key={hub.id}
+                          onClick={() => handleHubTap(hub.id)}
+                          className="px-3 py-2"
+                          style={{
+                            backgroundColor: selected ? `${C.green}15` : C.surface,
+                            border: `1px solid ${selected ? C.greenDim : C.border}`,
+                            borderRadius: 3,
+                            cursor: totalSelected < 5 || selected ? "pointer" : "default",
+                            opacity: totalSelected >= 5 && !selected ? 0.4 : 1,
+                            transition: "all 0.25s ease",
+                          }}
+                        >
+                          <span
+                            className="uppercase tracking-[0.1em]"
+                            style={{
+                              ...label,
+                              fontSize: "0.65rem",
+                              color: selected ? C.green : C.textMid,
+                            }}
+                          >
+                            {hub.name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div
@@ -355,7 +522,7 @@ export function Onboarding() {
                   }}
                 >
                   <span style={{ ...label, fontSize: "0.7rem", color: C.textDim }}>
-                    {state.selectedZones.length}/5 zones selectionnees.
+                    {totalSelected}/5 zones selectionnees.
                     Le systeme ajuste le champ autour de tes positions preferees.
                   </span>
                 </div>
@@ -460,6 +627,136 @@ export function Onboarding() {
                 </div>
               </motion.div>
             )}
+
+            {/* ── Step 3: Summary ── */}
+            {state.step === 3 && (
+              <motion.div
+                key="step3"
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 12 }}
+                transition={{ duration: 0.25 }}
+                className="flex flex-col gap-6 flex-1"
+              >
+                <div className="flex flex-col gap-2">
+                  <h1
+                    style={{
+                      fontFamily: "'Cormorant Garamond', serif",
+                      fontSize: "clamp(2rem, 6vw, 3rem)",
+                      fontWeight: 300,
+                      lineHeight: 1.1,
+                      color: C.text,
+                      margin: 0,
+                    }}
+                  >
+                    Resume
+                  </h1>
+                  <p style={{ ...label, color: C.textDim, margin: 0 }}>
+                    Le champ est calibre. Pret a lire.
+                  </p>
+                </div>
+
+                {/* Summary cards */}
+                <div className="flex flex-col gap-3">
+                  {/* Shift */}
+                  <div
+                    className="px-4 py-3 flex items-center justify-between"
+                    style={{
+                      backgroundColor: C.surface,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 3,
+                    }}
+                  >
+                    <span style={{ ...label, fontSize: "0.65rem", color: C.textDim }}>
+                      Rythme
+                    </span>
+                    <span
+                      className="uppercase tracking-[0.15em]"
+                      style={{ ...label, fontSize: "0.75rem", color: C.green }}
+                    >
+                      {state.shiftType ? SHIFT_LABELS[state.shiftType] : "—"}
+                    </span>
+                  </div>
+
+                  {/* Zones */}
+                  <div
+                    className="px-4 py-3"
+                    style={{
+                      backgroundColor: C.surface,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 3,
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span style={{ ...label, fontSize: "0.65rem", color: C.textDim }}>
+                        Zones
+                      </span>
+                      <span style={{ ...mono, fontSize: "0.6rem", color: C.textDim }}>
+                        {totalSelected}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {state.selectedZones.map((zid) => {
+                        const t = TERRITORIES.find((x) => x.id === zid);
+                        return (
+                          <span
+                            key={zid}
+                            className="px-2 py-1"
+                            style={{
+                              backgroundColor: `${C.green}12`,
+                              borderRadius: 2,
+                              ...label,
+                              fontSize: "0.6rem",
+                              color: C.green,
+                            }}
+                          >
+                            {t?.name ?? zid}
+                          </span>
+                        );
+                      })}
+                      {state.selectedHubs.map((hid) => {
+                        const h = BANLIEUE_HUBS.find((x) => x.id === hid);
+                        return (
+                          <span
+                            key={hid}
+                            className="px-2 py-1"
+                            style={{
+                              backgroundColor: `${C.green}12`,
+                              borderRadius: 2,
+                              ...label,
+                              fontSize: "0.6rem",
+                              color: C.green,
+                            }}
+                          >
+                            {h?.name ?? hid}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Style */}
+                  <div
+                    className="px-4 py-3 flex items-center justify-between"
+                    style={{
+                      backgroundColor: C.surface,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 3,
+                    }}
+                  >
+                    <span style={{ ...label, fontSize: "0.65rem", color: C.textDim }}>
+                      Style
+                    </span>
+                    <span
+                      className="uppercase tracking-[0.15em]"
+                      style={{ ...label, fontSize: "0.75rem", color: C.green }}
+                    >
+                      {state.style ? STYLE_LABELS[state.style] : "—"}
+                    </span>
+                  </div>
+                </div>
+              </motion.div>
+            )}
           </AnimatePresence>
 
           {/* Spacer */}
@@ -502,7 +799,7 @@ export function Onboarding() {
                 transition: "all 0.3s ease",
               }}
             >
-              {state.step === 2 ? "LANCER LE CHAMP" : "CONTINUER"}
+              {state.step === 3 ? "LANCER LE CHAMP" : "CONTINUER"}
             </button>
           </div>
         </div>
