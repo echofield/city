@@ -151,7 +151,7 @@ function computeMetroStatus(): ContextSignal | null {
   if (effectiveMin >= METRO_REDUCED && effectiveMin < METRO_LAST_WINDOW) {
     const minsToLast = METRO_LAST_WINDOW - effectiveMin;
     if (minsToLast <= 60) {
-      return { text: , type: "transport" };
+      return { text: `Derniers metros dans ${minsToLast}min`, type: "transport" };
     }
     return { text: "Metro frequence reduite", type: "transport" };
   }
