@@ -170,7 +170,41 @@ function calculateOptimalWindow(
 }
 
 /**
- * Calculate opportunity score based on signals
+ * Signal Tier Weights (PASS 3 - Signal Quality Weighting)
+ *
+ * Tier 1 — Money Signals (elevated prominence):
+ *   - Luxury Hotel Departures (11:00-13:00, VIII/I/XVI)
+ *   - Theatre/Opera Exits (22:00-23:00, IX/VIII/II)
+ *   - Return Magnets (airport/station corridors)
+ *
+ * Tier 2 — Volume Signals (standard prominence):
+ *   - Club/bar exit waves
+ *   - Station arrival surges
+ *   - Event exit waves
+ *
+ * Tier 3 — Modifier Signals (context only):
+ *   - Weather (amplifies other signals)
+ *   - Transport disruptions
+ *   - Seasonal regime
+ */
+const TIER_1_ZONES = ['opéra', 'opera', 'madeleine', 'champs-élysées', 'champs-elysees', 'viii', 'i', 'xvi', 'concorde']
+const TIER_1_HOURS = { theatre: [21, 22, 23], luxuryHotel: [11, 12, 13] }
+const TIER_1_BOOST = 15 // +15 points for Tier 1 signals
+
+function isHighValueTimeWindow(): 'theatre' | 'luxuryHotel' | null {
+  const hour = new Date().getHours()
+  if (TIER_1_HOURS.theatre.includes(hour)) return 'theatre'
+  if (TIER_1_HOURS.luxuryHotel.includes(hour)) return 'luxuryHotel'
+  return null
+}
+
+function isTier1Zone(zoneName: string): boolean {
+  const lower = zoneName.toLowerCase()
+  return TIER_1_ZONES.some(z => lower.includes(z))
+}
+
+/**
+ * Calculate opportunity score based on signals with Tier weighting
  */
 function calculateOpportunityScore(
   brief: CompiledBrief,
@@ -191,6 +225,28 @@ function calculateOpportunityScore(
   // Check if it's in favored zones
   if (brief.now_block.zones?.some((z) => z.toLowerCase().includes(zoneNorm))) {
     score += 10
+  }
+
+  // TIER 1 BOOST: High-value time + high-value zone
+  const timeWindow = isHighValueTimeWindow()
+  if (timeWindow && isTier1Zone(targetZone)) {
+    score += TIER_1_BOOST
+  }
+
+  // Theatre/Opera specific boost during evening hours
+  if (timeWindow === 'theatre') {
+    // Check if signal mentions theatre/opera/concert
+    const hotspotReason = hotspot?.why?.toLowerCase() || ''
+    if (hotspotReason.includes('théâtre') || hotspotReason.includes('theatre') ||
+        hotspotReason.includes('opéra') || hotspotReason.includes('opera') ||
+        hotspotReason.includes('concert')) {
+      score += 10 // Additional boost for confirmed theatre signals
+    }
+  }
+
+  // Luxury hotel boost during departure hours
+  if (timeWindow === 'luxuryHotel' && isTier1Zone(targetZone)) {
+    score += 5 // Additional boost for luxury zones during hotel departure windows
   }
 
   // Confidence factor
@@ -360,17 +416,49 @@ export function buildDriverContext(
 }
 
 /**
+ * Score a zone for primary action selection (higher = better)
+ */
+function scoreZoneForSelection(
+  brief: CompiledBrief,
+  zoneName: string
+): number {
+  let score = calculateOpportunityScore(brief, zoneName)
+
+  // If this zone is the first hotspot, boost it
+  if (brief.horizon_block?.hotspots?.[0]?.zone?.toLowerCase() === zoneName.toLowerCase()) {
+    score += 5
+  }
+
+  return score
+}
+
+/**
  * Build PrimaryAction from brief and driver position
+ * Prefers Tier 1 signals when available
  */
 export function buildPrimaryAction(
   brief: CompiledBrief,
   ramifications: Ramification[],
   driverPos?: DriverPosition
 ): PrimaryAction | null {
-  // Determine target zone
-  const targetZone = brief.now_block.zones?.[0] ||
-    brief.horizon_block?.hotspots?.[0]?.zone ||
-    'Châtelet'
+  // Collect all candidate zones
+  const candidateZones = [
+    ...(brief.now_block.zones ?? []),
+    ...(brief.horizon_block?.hotspots?.map(h => h.zone) ?? []),
+  ].filter((z, i, arr) => z && arr.indexOf(z) === i) // dedupe
+
+  if (candidateZones.length === 0) {
+    candidateZones.push('Châtelet') // fallback
+  }
+
+  // Score and sort by value (Tier 1 signals win)
+  const scoredZones = candidateZones.map(zone => ({
+    zone,
+    score: scoreZoneForSelection(brief, zone)
+  })).sort((a, b) => b.score - a.score)
+
+  // Pick highest-scoring zone
+  const targetZone = scoredZones[0].zone
 
   // Get centroid
   const centroid = getZoneCentroidByName(targetZone)

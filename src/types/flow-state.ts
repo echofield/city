@@ -124,6 +124,9 @@ export interface FlowState {
 
   /** Driver context based on current position */
   driverContext?: DriverContext;
+
+  /** Banlieue hub states (CDG, Orly, La Defense, etc.) */
+  banlieueHubs?: Record<string, BanlieueHubState>;
 }
 
 /** Confidence level as enum string (not numeric) */

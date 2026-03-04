@@ -24,6 +24,16 @@ export type ActionType =
 
 export type ZoneStateApi = "cold" | "warm" | "hot" | "blocked";
 
+export type BanlieueHubStatus = "dormant" | "forming" | "active";
+
+export interface BanlieueHubState {
+  id: string;
+  heat: number;
+  status: BanlieueHubStatus;
+  nextPic?: string;
+  corridor: "nord" | "est" | "sud" | "ouest";
+}
+
 export interface FlowState {
   windowState: WindowState;
   windowLabel: string;
@@ -55,6 +65,8 @@ export interface FlowState {
   version?: number;
   /** ISO timestamp when this state was generated */
   generatedAt?: string;
+  /** Banlieue hub states (CDG, Orly, La Defense, etc.) */
+  banlieueHubs?: Record<string, BanlieueHubState>;
 }
 
 /** Format seconds as MM:SS for display */
@@ -139,6 +151,7 @@ export function engineStateToApiState(engine: {
     upcoming: (e.upcoming as FlowState["upcoming"]) ?? [],
     peaks: (e.peaks as FlowState["peaks"]) ?? [],
     memory: engine.memory,
+    banlieueHubs: (e.banlieueHubs as Record<string, BanlieueHubState>) ?? undefined,
     version: 1,
     generatedAt: new Date().toISOString(),
   };

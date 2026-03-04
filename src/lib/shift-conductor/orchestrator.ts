@@ -60,13 +60,29 @@ const HOLD_MESSAGES = [
   'Demande en formation',
 ]
 
+/**
+ * Generate deterministic move ID (no Math.random in production)
+ * Uses timestamp + minute hash for uniqueness
+ */
 function generateMoveId(): string {
-  return `move-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
+  const now = Date.now()
+  const hash = ((now >> 4) ^ (now >> 8)).toString(36).slice(-6)
+  return `move-${now}-${hash}`
 }
 
-function pickRandom<T>(arr: T[], count: number = 1): T[] {
-  const shuffled = [...arr].sort(() => 0.5 - Math.random())
-  return shuffled.slice(0, count)
+/**
+ * Deterministic selection based on hour/minute rotation (PASS 1: No random)
+ * This ensures reproducible behavior in production
+ */
+function selectDeterministic<T>(arr: T[], count: number = 1, seedOffset: number = 0): T[] {
+  if (arr.length === 0) return []
+  const minute = new Date().getMinutes()
+  const startIndex = (minute + seedOffset) % arr.length
+  const result: T[] = []
+  for (let i = 0; i < Math.min(count, arr.length); i++) {
+    result.push(arr[(startIndex + i) % arr.length])
+  }
+  return result
 }
 
 // Determine energy phase based on time
@@ -87,32 +103,21 @@ export function generateNextMove(currentZone?: string): NextMove {
     ? PARIS_ZONES.filter((z) => z !== currentZone)
     : PARIS_ZONES
 
-  const targetZone = pickRandom(availableZones, 1)[0]
-  const signals = pickRandom(FIELD_SIGNALS, 3)
+  const targetZone = selectDeterministic(availableZones, 1)[0]
+  const signals = selectDeterministic(FIELD_SIGNALS, 3)
   const energy = getCurrentEnergyPhase()
 
-  // Determine field state based on energy and randomness
-  const states: FieldState[] = [
-    'WINDOW_OPENING',
-    'WINDOW_ACTIVE',
-    'HOLD_POSITION',
-    'FLOW_SHIFT',
-    'WINDOW_CLOSING',
-  ]
-  const stateWeights = energy === 'PEAK' || energy === 'RISING'
-    ? [0.3, 0.35, 0.15, 0.15, 0.05]
-    : [0.15, 0.2, 0.3, 0.2, 0.15]
-
-  const rand = Math.random()
-  let cumulative = 0
-  let state: FieldState = 'WINDOW_ACTIVE'
-  for (let i = 0; i < states.length; i++) {
-    cumulative += stateWeights[i]
-    if (rand < cumulative) {
-      state = states[i]
-      break
-    }
+  // Determine field state deterministically from energy phase
+  // No random - state is derived from time-based energy
+  const energyToState: Record<EnergyPhase, FieldState> = {
+    'BUILDING': 'WINDOW_OPENING',
+    'RISING': 'WINDOW_OPENING',
+    'PEAK': 'WINDOW_ACTIVE',
+    'DISPERSION': 'WINDOW_CLOSING',
+    'CALM': 'HOLD_POSITION',
+    'NIGHT_DRIFT': 'RESET',
   }
+  const state: FieldState = energyToState[energy] ?? 'HOLD_POSITION'
 
   // For HOLD state, target is current zone
   const zone = state === 'HOLD_POSITION' ? (currentZone || targetZone) : targetZone
@@ -122,7 +127,17 @@ export function generateNextMove(currentZone?: string): NextMove {
   const windowCloses = new Date(now.getTime() + 20 * 60000) // +20min
   const arrivalTarget = new Date(now.getTime() + 8 * 60000) // +8min
 
-  const confidence = 0.72 + Math.random() * 0.2
+  // Confidence based on energy phase - deterministic, not random
+  // Peak/Rising = higher confidence, Calm/Drift = lower
+  const energyConfidenceMap: Record<EnergyPhase, number> = {
+    'PEAK': 0.88,
+    'RISING': 0.82,
+    'BUILDING': 0.78,
+    'CALM': 0.65,
+    'DISPERSION': 0.72,
+    'NIGHT_DRIFT': 0.60,
+  }
+  const confidence = energyConfidenceMap[energy] ?? 0.7
   const confidenceLabel = confidence > 0.85 ? 'HIGH' : confidence > 0.7 ? 'MODERATE' : 'FORMING'
 
   return {
@@ -143,16 +158,17 @@ export function generateNextMove(currentZone?: string): NextMove {
       issued_at: now.toISOString(),
       expiry_seconds: state === 'WINDOW_CLOSING' ? 180 : 420,
       pickup_window: {
-        min_minutes: 4 + Math.floor(Math.random() * 3),
-        max_minutes: 8 + Math.floor(Math.random() * 4),
+        // Deterministic based on energy phase - no random
+        min_minutes: energy === 'PEAK' ? 4 : energy === 'RISING' ? 5 : 6,
+        max_minutes: energy === 'PEAK' ? 8 : energy === 'RISING' ? 10 : 12,
       },
     },
     confidence,
     confidence_label: confidenceLabel,
     hold_message: state === 'HOLD_POSITION' || state === 'WINDOW_ACTIVE'
-      ? pickRandom(HOLD_MESSAGES, 1)[0]
+      ? selectDeterministic(HOLD_MESSAGES, 1)[0]
       : undefined,
-    alternatives: pickRandom(availableZones.filter((z) => z !== zone), 2),
+    alternatives: selectDeterministic(availableZones.filter((z) => z !== zone), 2),
   }
 }
 

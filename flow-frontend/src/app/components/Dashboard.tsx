@@ -587,6 +587,7 @@ export function Dashboard(props: {
             favoredZoneIds={flowState.favoredZoneIds}
             breathPhase={breathPhase}
             windowState={flowState.windowState}
+            banlieueHubs={flowState.banlieueHubs}
           />
         </motion.div>
 

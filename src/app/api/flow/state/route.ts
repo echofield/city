@@ -3,12 +3,12 @@ import { NextResponse } from 'next/server'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-import { MOCK_COMPILED_BRIEF } from '@/lib/flow-engine/mock-data'
 import { orchestrate } from '@/lib/shift-conductor/orchestrator'
 import { compiledBriefAndMoveToFlowState, TERRITORY_IDS } from '@/lib/flow-engine/flow-state-adapter'
 import { compiledFromCitySignalsPackV1 } from '@/lib/flow-engine/compile-from-pack'
 import { buildDayTemplates } from '@/lib/flow-engine/day-templates'
 import { buildPrimaryAction, buildActiveFrictions, buildAlternatives, buildDriverContext } from '@/lib/flow-engine/primary-action-builder'
+import { computeBanlieueHubs } from '@/lib/flow-engine/banlieue-hubs'
 import { loadCitySignals } from '@/lib/city-signals/loadCitySignals'
 import { loadWeeklySignals } from '@/lib/city-signals/loadWeeklySignals'
 import { normalizeCitySignalsPack } from '@/lib/city-signals/normalize-pack'
@@ -17,8 +17,59 @@ import { flowStateParamsSchema, parseQueryParams } from '@/lib/validation'
 import { cache, CACHE_KEYS, CACHE_TTL } from '@/lib/cache'
 import type { FlowState, Ramification, DriverPosition } from '@/types/flow-state'
 import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
+import type { CompiledBrief } from '@/lib/prompts/contracts'
 
-/** Deterministic mock FlowState for mock=1 */
+/**
+ * Returns honest degraded brief when no data available
+ * No fake signals - just empty with low confidence
+ */
+function createEmptyBrief(): CompiledBrief {
+  const now = new Date().toISOString()
+  return {
+    meta: {
+      timezone: 'Europe/Paris',
+      generated_at: now,
+      run_mode: 'daily',
+      profile_variant: 'NIGHT_CHASER',
+      confidence_overall: 0.2,
+    },
+    now_block: {
+      window: '0-15min',
+      actions: ['Pas de signal fort — attente données'],
+      zones: [],
+      rule: 'Attente signaux',
+      micro_alerts: [],
+      confidence: 0.2,
+    },
+    next_block: {
+      slots: [],
+      key_transition: 'Données non disponibles',
+    },
+    horizon_block: {
+      hotspots: [],
+      rules: [],
+      expected_peaks: [],
+    },
+    summary: ['Signaux en attente de compilation'],
+    timeline: [],
+    hotspots: [],
+    alerts: [],
+    rules: [],
+    anti_clustering: {
+      principle: '',
+      dispatch_hint: [],
+    },
+    validation: {
+      unknowns: ['Données tonight pack non disponibles'],
+      do_not_assume: [],
+    },
+  }
+}
+
+/**
+ * Deterministic empty/degraded FlowState for mock=1 mode
+ * WARNING: This is for development testing only, clearly marked
+ */
 function getMockFlowState(sessionStart?: number): FlowState {
   const now = Date.now()
   const start = sessionStart ?? now - 15 * 60 * 1000
@@ -31,61 +82,48 @@ function getMockFlowState(sessionStart?: number): FlowState {
   else if (progress < 0.75) shiftPhase = 'pic'
   else shiftPhase = 'dispersion'
 
+  // All zones dormant - no fake heat patterns
   const zoneHeat: Record<string, number> = {}
   const zoneSaturation: Record<string, number> = {}
   const zoneState: Record<string, FlowState['zoneState'][string]> = {}
   for (const id of TERRITORY_IDS) {
-    const favored = ['11', '12', '3', '1'].includes(id)
-    zoneHeat[id] = favored ? 0.5 + Math.sin((id.length + 1) * 0.7) * 0.2 : 0.1
-    zoneSaturation[id] = favored ? 45 : 15
-    zoneState[id] = favored ? (zoneHeat[id] > 0.6 ? 'hot' : 'warm') : 'cold'
+    zoneHeat[id] = 0 // Dormant - no data
+    zoneSaturation[id] = 0
+    zoneState[id] = 'cold'
   }
 
   return {
     version: 1,
     generatedAt: new Date().toISOString(),
-    windowState: 'active',
-    windowLabel: 'FENETRE ACTIVE',
-    windowCountdownSec: 420,
-    windowCountdown: '07:00',
-    windowMinutes: 7,
+    windowState: 'stable',
+    windowLabel: 'MODE TEST — DONNÉES SIMULÉES',
+    windowCountdownSec: 0,
+    windowCountdown: '00:00',
+    windowMinutes: 0,
     shiftPhase,
     shiftProgress: progress,
-    action: 'move',
-    actionLabel: 'BOUGER',
-    confidence: 78,
-    fieldMessage: 'Bastille actif.',
-    temporalMessage: 'Fenêtre ouverte — 7 min restantes.',
-    targetZone: 'Bastille',
-    targetZoneArr: 'XI',
-    favoredCorridor: 'Est',
-    favoredZoneIds: ['11', '12', '3', '1'],
-    alternatives: ['République', 'Bercy', 'Marais'],
+    action: 'rest',
+    actionLabel: 'TEST',
+    confidence: 0, // Zero confidence - this is test mode
+    fieldMessage: 'Mode test activé — données non réelles',
+    temporalMessage: 'Utilisez mock=0 pour données réelles',
+    targetZone: '',
+    targetZoneArr: '',
+    favoredCorridor: 'centre',
+    favoredZoneIds: [],
+    alternatives: [],
     zoneHeat,
     zoneSaturation,
     zoneState,
     zoneStates: zoneState,
-    earningsEstimate: [32, 48],
-    sessionEarnings: 12.5,
+    earningsEstimate: [0, 0],
+    sessionEarnings: 0,
     signals: [
-      { text: 'Surge +1.3x Gare du Nord', type: 'surge' },
-      { text: 'Pluie légère dans 20min', type: 'weather' },
-      { text: 'Sortie concert Accor Arena ~23h30', type: 'event' },
+      { text: '⚠️ MODE TEST — données simulées', type: 'event' },
     ],
-    upcoming: [
-      { time: '20:00', zone: 'Bercy', saturation: 65, earnings: 38 },
-      { time: '21:00', zone: 'Marais', saturation: 50, earnings: 32 },
-    ],
-    peaks: [
-      { time: '22h45', zone: 'Bercy', reason: 'Concert Phoenix', score: 92 },
-      { time: '23h15', zone: 'PSG', reason: 'Match', score: 88 },
-    ],
-    templates: [
-      { id: 'day-matin', title: 'Ville Calme', window: 'morning', description: 'Démarrage progressif.', fuelBand: '~12–20€', movement: 2, stress: 1, potential: 2, suggestedZones: ['Gare du Nord', 'Châtelet'], reasons: [] },
-      { id: 'day-midi', title: 'Boucles Courtes', window: 'midday', description: 'Corridors pro.', fuelBand: '~15–25€', movement: 3, stress: 2, potential: 3, suggestedZones: ['Châtelet', 'Marais'], reasons: [] },
-      { id: 'day-soir', title: 'Stade/Arena', window: 'evening', description: 'Bercy — pic sortie.', fuelBand: '~20–35€', movement: 4, stress: 3, potential: 4, suggestedZones: ['Bercy', 'Accor Arena'], reasons: ['Concert Phoenix 22h45', 'Match PSG 23h15'] },
-      { id: 'day-nuit', title: 'Sorties', window: 'night', description: 'Sorties bars et quartiers.', fuelBand: '~20–35€', movement: 4, stress: 2, potential: 4, suggestedZones: ['Gare du Nord', 'Châtelet'], reasons: [] },
-    ],
+    upcoming: [],
+    peaks: [],
+    templates: [],
   }
 }
 
@@ -162,7 +200,8 @@ export async function GET(request: Request) {
 
   // Load city signals (cached)
   const pack = await getCachedCitySignals()
-  const brief = pack ? compiledFromCitySignalsPackV1(pack) : MOCK_COMPILED_BRIEF
+  // Use real compiled brief or honest empty state - NEVER mock data
+  const brief = pack ? compiledFromCitySignalsPackV1(pack) : createEmptyBrief()
 
   // Load weekly skeleton
   const weeklySkeleton = await loadWeeklySignals()
@@ -203,6 +242,9 @@ export async function GET(request: Request) {
     flowState.driverContext = buildDriverContext(driverPosition, primaryAction.zone)
   }
   flowState.activeFrictions = buildActiveFrictions(brief, ramifications)
+
+  // Compute banlieue hub states from pack and ramifications
+  flowState.banlieueHubs = computeBanlieueHubs(pack, ramifications)
 
   return NextResponse.json(flowState, {
     headers: {

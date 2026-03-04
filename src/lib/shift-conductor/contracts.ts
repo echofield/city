@@ -75,7 +75,7 @@ export interface NextMove {
 // SHIFT HISTORY (continuity ribbon)
 // ============================================
 
-export type MoveOutcome = 'followed' | 'ignored' | 'partial'
+export type MoveOutcome = 'followed' | 'ignored' | 'partial' | 'pending'
 
 export interface PastMove {
   id: string

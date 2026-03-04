@@ -57,6 +57,13 @@ export interface CitySignalsSocialV1 {
   notes?: string
 }
 
+/** Source status for API failure tracking (PASS 4) */
+export interface SourceStatus {
+  openagenda: 'ok' | 'failed' | 'partial'
+  openweather: 'ok' | 'failed' | 'partial'
+  prim: 'ok' | 'failed' | 'partial'
+}
+
 export interface CitySignalsPackV1 {
   date: string
   generatedAt: string
@@ -64,4 +71,6 @@ export interface CitySignalsPackV1 {
   transport: CitySignalsTransportV1[]
   weather: CitySignalsWeatherV1[]
   social?: CitySignalsSocialV1[]
+  /** Source status for tracking API failures (PASS 4) */
+  sourceStatus?: SourceStatus
 }

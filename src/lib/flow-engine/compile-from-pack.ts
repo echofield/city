@@ -15,6 +15,11 @@ export function compiledFromCitySignalsPackV1(pack: CitySignalsPackV1): Compiled
   const nextSlots: CompiledBrief['next_block']['slots'] = []
   const summary: string[] = []
 
+  // Derive confidence from pack source - no hardcoded values
+  // Higher confidence for more data sources, lower for sparse data
+  const sourceCount = pack.events.length + pack.weather.length + pack.transport.length
+  const baseConfidence = sourceCount > 5 ? 0.85 : sourceCount > 2 ? 0.75 : sourceCount > 0 ? 0.65 : 0.4
+
   // Weather → WEATHER alert + micro_alert
   for (const w of pack.weather) {
     const msg =
@@ -59,9 +64,15 @@ export function compiledFromCitySignalsPackV1(pack: CitySignalsPackV1): Compiled
     const why = e.expectedAttendance
       ? `${e.name} ${e.expectedAttendance} pers`
       : e.name
+    // Score derived from attendance and source reliability, not hardcoded
+    const attendanceScore = e.expectedAttendance
+      ? Math.min(100, 50 + Math.floor(e.expectedAttendance / 500))
+      : 60
+    const eventScore = Math.round(attendanceScore * baseConfidence)
+
     hotspots.push({
       zone: e.zoneImpact[0] ?? e.venue,
-      score: 75,
+      score: eventScore,
       window,
       why: [why],
       saturation_risk: (e.expectedAttendance ?? 0) > 15000 ? 'HIGH' : 'MED',
@@ -76,7 +87,7 @@ export function compiledFromCitySignalsPackV1(pack: CitySignalsPackV1): Compiled
       end: e.endTime ?? '23:00',
       primary_zone: e.zoneImpact[0] ?? e.venue,
       reason: e.name,
-      confidence: 0.8,
+      confidence: baseConfidence, // Derived from pack source count
       best_arrival: e.startTime ?? '20:00',
       best_exit: e.endTime ?? '23:00',
       saturation_risk: (e.expectedAttendance ?? 0) > 15000 ? 'HIGH' : 'MED',
@@ -88,7 +99,7 @@ export function compiledFromCitySignalsPackV1(pack: CitySignalsPackV1): Compiled
       zone: e.zoneImpact[0] ?? e.venue,
       reason: e.name,
       saturation: (e.expectedAttendance ?? 0) > 15000 ? 'HIGH' : 'MED',
-      confidence: 0.8,
+      confidence: baseConfidence, // Derived from pack source count
     })
     alerts.push({
       type: 'EVENT',
@@ -111,7 +122,7 @@ export function compiledFromCitySignalsPackV1(pack: CitySignalsPackV1): Compiled
       generated_at: pack.generatedAt,
       run_mode: 'daily',
       profile_variant: 'NIGHT_CHASER',
-      confidence_overall: 0.75,
+      confidence_overall: baseConfidence, // Derived from source count
     },
     now_block: {
       window: '0-15min',
@@ -121,16 +132,16 @@ export function compiledFromCitySignalsPackV1(pack: CitySignalsPackV1): Compiled
         : [firstZone, secondZone],
       rule: 'Rester en zone recommandée',
       micro_alerts: microAlerts.slice(0, 5),
-      confidence: 0.75,
+      confidence: baseConfidence,
     },
     next_block: {
-      slots: nextSlots.length ? nextSlots : [{ window: '20:00-22:00', zone: firstZone, reason: 'Données du jour', saturation: 'MED', confidence: 0.75 }],
+      slots: nextSlots.length ? nextSlots : [{ window: '20:00-22:00', zone: firstZone, reason: 'Données du jour', saturation: 'MED', confidence: baseConfidence * 0.8 }],
       key_transition: pack.events.length ? `Flux: ${pack.events.map((e) => e.zoneImpact[0]).join(' → ')}` : 'Flux stable',
     },
     horizon_block: {
       hotspots: hotspots.length
         ? hotspots.map(h => ({ zone: h.zone, window: h.window, score: h.score, why: h.why.join(', ') }))
-        : [{ zone: firstZone, window: '20:00-23:00', score: 70, why: 'Données ville' }],
+        : [{ zone: firstZone, window: '20:00-23:00', score: Math.round(60 * baseConfidence), why: 'Données ville' }],
       rules: ['Rester en zone recommandée', 'Éviter saturation'],
       expected_peaks: expectedPeaks.length ? expectedPeaks : [`23:00 ${firstZone}`],
     },
@@ -141,7 +152,7 @@ export function compiledFromCitySignalsPackV1(pack: CitySignalsPackV1): Compiled
         end: '23:00',
         primary_zone: firstZone,
         reason: 'Données du jour',
-        confidence: 0.75,
+        confidence: baseConfidence * 0.8, // Degraded - no specific event data
         best_arrival: '19:45',
         best_exit: '22:30',
         saturation_risk: 'MED',
@@ -152,7 +163,7 @@ export function compiledFromCitySignalsPackV1(pack: CitySignalsPackV1): Compiled
     hotspots: hotspots.length ? hotspots : [
       {
         zone: firstZone,
-        score: 75,
+        score: Math.round(60 * baseConfidence), // Derived, not hardcoded
         window: '20:00–23:00',
         why: ['Données city signals'],
         saturation_risk: 'MED',
@@ -175,8 +186,29 @@ export function compiledFromCitySignalsPackV1(pack: CitySignalsPackV1): Compiled
       })),
     },
     validation: {
-      unknowns: [],
+      unknowns: buildSourceFailureMessages(pack),
       do_not_assume: [],
     },
   }
+}
+
+/**
+ * Build source failure messages from pack sourceStatus (PASS 4)
+ */
+function buildSourceFailureMessages(pack: CitySignalsPackV1): string[] {
+  const messages: string[] = []
+
+  if (pack.sourceStatus) {
+    if (pack.sourceStatus.openagenda === 'failed') {
+      messages.push('OpenAgenda indisponible — événements manquants')
+    }
+    if (pack.sourceStatus.openweather === 'failed') {
+      messages.push('OpenWeather indisponible — météo inconnue')
+    }
+    if (pack.sourceStatus.prim === 'failed') {
+      messages.push('PRIM indisponible — transport non vérifié')
+    }
+  }
+
+  return messages
 }

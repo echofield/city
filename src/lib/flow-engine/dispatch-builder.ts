@@ -177,7 +177,8 @@ function buildExtendedTimeline(brief: CompiledBrief): TimelineEvent[] {
 
 /**
  * Build session metrics
- * In real implementation, this would come from driver session tracking
+ * NOTE: In production, this should come from driver session tracking
+ * Currently shows degraded state when no real data available
  */
 function buildSessionMetrics(
   sessionStart?: number,
@@ -188,12 +189,23 @@ function buildSessionMetrics(
   const start = sessionStart ?? now - 2 * 60 * 60 * 1000 // default 2h ago
   const durationMin = Math.round((now - start) / 60000)
 
+  // Use provided values or mark as unavailable
+  const hasRealEarnings = earnings !== undefined
+  const hasRealCourses = coursesCount !== undefined
+
+  // Efficiency: only calculate if we have real data, otherwise show baseline
+  // No random - use 75% as baseline "average" when no tracking data
+  const baselineEfficiency = 75
+  const calculatedEfficiency = hasRealEarnings && hasRealCourses && coursesCount > 0
+    ? Math.min(100, Math.round((earnings / (durationMin * 0.6)) * 75)) // compare to target rate
+    : baselineEfficiency
+
   return {
     duration_min: durationMin,
     courses_count: coursesCount ?? Math.floor(durationMin / 25), // estimate ~25 min per course
     earnings: earnings ?? Math.round(durationMin * 0.6), // estimate ~36€/h
     target_earnings: 120, // default shift target
-    efficiency: Math.min(100, Math.round(70 + Math.random() * 15)), // 70-85% typical
+    efficiency: calculatedEfficiency,
   }
 }
 

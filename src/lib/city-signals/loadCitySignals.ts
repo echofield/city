@@ -2,6 +2,12 @@
  * Load CitySignalsPackV1 from Supabase Storage (flow-packs bucket).
  * Falls back to local disk in development mode only.
  *
+ * Priority:
+ *   1. Tonight pack (v1.5): data/city-signals/tonight/{date}.paris-idf.json
+ *   2. Daily pack: data/city-signals/daily/{date}.paris-idf.json
+ *   3. Supabase Storage
+ *   4. Events compilation fallback
+ *
  * Storage path: flow-packs/daily/{YYYY-MM-DD}.paris-idf.json
  */
 
@@ -11,10 +17,13 @@ import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
 import { storageFetchJson, isStorageConfigured } from '@/lib/supabase/storageFetchJson'
 import type { BanlieueEvent } from './event-types'
 import { compileEventsForDate, mergePackWithRamifications } from './compileFromEvents'
+import { tonightPackToCitySignalsPack, isTonightPack } from './tonightPackAdapter'
+import type { TonightPack } from '@/lib/signal-fetchers/types'
 
 const STORAGE_BUCKET = 'flow-packs'
 const SIGNALS_DIR = path.join(process.cwd(), 'data', 'city-signals')
 const DAILY_DIR = path.join(SIGNALS_DIR, 'daily')
+const TONIGHT_DIR = path.join(SIGNALS_DIR, 'tonight')
 const EVENTS_DIR = path.join(SIGNALS_DIR, 'events')
 
 /**
@@ -27,19 +36,49 @@ function getTodayParis(): string {
 }
 
 /**
+ * Get tonight's date (handles cross-midnight)
+ * Before 06:00 → return yesterday's date
+ */
+function getTonightParis(): string {
+  const now = new Date()
+  const parisTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }))
+  const hour = parisTime.getHours()
+
+  // If before 06:00, we're still in "last night"
+  if (hour < 6) {
+    parisTime.setDate(parisTime.getDate() - 1)
+  }
+
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Europe/Paris',
+  }).format(parisTime)
+}
+
+/**
  * Load daily pack for the given date (YYYY-MM-DD).
  * If date omitted, use today (Europe/Paris).
  *
  * Priority:
- *   1. Supabase Storage: flow-packs/daily/{date}.paris-idf.json
- *   2. Local disk (dev only): data/city-signals/daily/{date}.paris-idf.json
- *   3. Local disk legacy (dev only): data/city-signals/{date}.json
+ *   1. Tonight pack (v1.5): data/city-signals/tonight/{date}.paris-idf.json
+ *   2. Supabase Storage: flow-packs/daily/{date}.paris-idf.json
+ *   3. Local disk (dev only): data/city-signals/daily/{date}.paris-idf.json
+ *   4. Local disk legacy (dev only): data/city-signals/{date}.json
+ *   5. Events compilation fallback
  */
 export async function loadCitySignals(date?: string): Promise<CitySignalsPackV1 | null> {
   const targetDate = date ?? getTodayParis()
+  const tonightDate = getTonightParis()
+
+  // 1. Try tonight pack first (v1.5 real signals)
+  const tonightPack = loadTonightPack(tonightDate)
+  if (tonightPack) {
+    console.log(`[loadCitySignals] Source: Tonight pack v1.5 (${tonightDate})`)
+    return tonightPackToCitySignalsPack(tonightPack)
+  }
+
   const storagePath = `daily/${targetDate}.paris-idf.json`
 
-  // Try Supabase Storage first
+  // 2. Try Supabase Storage
   if (isStorageConfigured()) {
     try {
       const pack = await storageFetchJson<CitySignalsPackV1>(STORAGE_BUCKET, storagePath)
@@ -55,7 +94,7 @@ export async function loadCitySignals(date?: string): Promise<CitySignalsPackV1 
     }
   }
 
-  // Disk fallback (development only)
+  // 3. Disk fallback (development only)
   if (process.env.NODE_ENV === 'development') {
     const diskPack = loadFromDisk(targetDate)
     if (diskPack) {
@@ -64,11 +103,45 @@ export async function loadCitySignals(date?: string): Promise<CitySignalsPackV1 
     }
   }
 
-  // Events compilation fallback — try to compile from events calendar
+  // 4. Events compilation fallback — try to compile from events calendar
   const compiledPack = await loadAndCompileFromEvents(targetDate)
   if (compiledPack) {
     console.log(`[loadCitySignals] Source: Compiled from events calendar`)
     return compiledPack
+  }
+
+  return null
+}
+
+/**
+ * Load tonight pack from disk (v1.5)
+ */
+function loadTonightPack(date: string): TonightPack | null {
+  const tonightPath = path.join(TONIGHT_DIR, `${date}.paris-idf.json`)
+
+  if (!fs.existsSync(tonightPath)) {
+    return null
+  }
+
+  try {
+    const raw = fs.readFileSync(tonightPath, 'utf-8')
+    const data = JSON.parse(raw)
+
+    if (isTonightPack(data)) {
+      // Check if pack is too old (> 6 hours)
+      const compiledAt = new Date(data.compiledAt)
+      const ageHours = (Date.now() - compiledAt.getTime()) / (1000 * 60 * 60)
+
+      if (ageHours > 6) {
+        console.warn(`[loadCitySignals] Tonight pack is ${ageHours.toFixed(1)}h old (stale)`)
+        // Still use it but mark as degraded
+        data.meta.stale = true
+      }
+
+      return data
+    }
+  } catch (err) {
+    console.error('[loadCitySignals] Tonight pack parse error:', err)
   }
 
   return null

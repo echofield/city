@@ -185,8 +185,10 @@ function buildZoneMaps(
       state = 'hot'
       saturation = saturationMap[id] ?? 60
     } else if (isFavored) {
-      heat = 0.4 + Math.random() * 0.35
-      state = heat > 0.65 ? 'hot' : heat > 0.4 ? 'warm' : 'warm'
+      // Derive heat from brief confidence - no random noise
+      const baseConfidence = brief.meta.confidence_overall ?? 0.5
+      heat = 0.4 + (baseConfidence * 0.35) // 0.4-0.75 based on confidence
+      state = heat > 0.65 ? 'hot' : 'warm'
       saturation = saturationMap[id] ?? 30
     }
     zoneHeat[id] = Math.min(1, heat)
@@ -266,20 +268,33 @@ function buildSignals(brief: CompiledBrief): FlowState['signals'] {
 
 /** Build upcoming from timeline or next_block.slots */
 function buildUpcoming(brief: CompiledBrief): FlowState['upcoming'] {
+  // Base rate: 25-35 EUR/h Paris night, derive from confidence
+  const baseRate = 28
+  const confidenceMultiplier = brief.meta.confidence_overall ?? 0.7
+
   if (brief.timeline?.length) {
-    return brief.timeline.slice(0, 6).map((t) => ({
-      time: t.start ?? '',
-      zone: t.primary_zone ?? '',
-      saturation: t.saturation_risk === 'HIGH' ? 80 : t.saturation_risk === 'MED' ? 50 : 25,
-      earnings: 28 + Math.floor(Math.random() * 20),
-    }))
+    return brief.timeline.slice(0, 6).map((t) => {
+      // Earnings derived from saturation risk (higher saturation = more competition = lower earnings)
+      const satRisk = t.saturation_risk === 'HIGH' ? 0.8 : t.saturation_risk === 'MED' ? 1.0 : 1.15
+      const earnings = Math.round(baseRate * satRisk * confidenceMultiplier)
+      return {
+        time: t.start ?? '',
+        zone: t.primary_zone ?? '',
+        saturation: t.saturation_risk === 'HIGH' ? 80 : t.saturation_risk === 'MED' ? 50 : 25,
+        earnings,
+      }
+    })
   }
-  return (brief.next_block.slots ?? []).slice(0, 6).map((s) => ({
-    time: s.window?.split('-')[0] ?? '',
-    zone: s.zone,
-    saturation: s.saturation === 'HIGH' ? 80 : s.saturation === 'MED' ? 50 : 25,
-    earnings: 30,
-  }))
+  return (brief.next_block.slots ?? []).slice(0, 6).map((s) => {
+    const satRisk = s.saturation === 'HIGH' ? 0.8 : s.saturation === 'MED' ? 1.0 : 1.15
+    const earnings = Math.round(baseRate * satRisk * confidenceMultiplier)
+    return {
+      time: s.window?.split('-')[0] ?? '',
+      zone: s.zone,
+      saturation: s.saturation === 'HIGH' ? 80 : s.saturation === 'MED' ? 50 : 25,
+      earnings,
+    }
+  })
 }
 
 /** Zone name aliases to centroid IDs */

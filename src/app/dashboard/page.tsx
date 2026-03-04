@@ -122,6 +122,53 @@ export default function DashboardPage() {
   const [showOps, setShowOps] = useState(false)
   const [showMap, setShowMap] = useState(true)
 
+  // ════════════════════════════════════════════════════════════════
+  // GRACEFUL STATE DETECTION (PASS 4)
+  // ════════════════════════════════════════════════════════════════
+
+  /** Check if brief data is stale (> 6 hours old) */
+  const isStale = (() => {
+    if (!brief?.meta.generated_at) return false
+    const generatedAt = new Date(brief.meta.generated_at).getTime()
+    const sixHoursAgo = Date.now() - 6 * 60 * 60 * 1000
+    return generatedAt < sixHoursAgo
+  })()
+
+  /** Check if we're between compilations (before 18h, no fresh signals) */
+  const isBetweenCompilations = (() => {
+    const now = new Date()
+    const hour = now.getHours()
+    // Before 18h and no fresh data from today
+    if (hour < 18) {
+      if (!brief?.meta.generated_at) return true
+      const generatedDate = new Date(brief.meta.generated_at).toDateString()
+      const todayDate = now.toDateString()
+      return generatedDate !== todayDate
+    }
+    return false
+  })()
+
+  /** Check if data is empty (no meaningful signals) */
+  const isEmpty = (() => {
+    if (!brief) return true
+    const hasHotspots = brief.hotspots.length > 0 && brief.hotspots.some(h => h.score > 30)
+    const hasTimeline = brief.timeline.length > 0
+    const hasAlerts = brief.alerts.length > 0
+    return !hasHotspots && !hasTimeline && !hasAlerts
+  })()
+
+  /** Cross-midnight window (00:00-06:00) - continue showing tonight's data */
+  const isCrossMidnight = (() => {
+    const hour = new Date().getHours()
+    return hour >= 0 && hour < 6
+  })()
+
+  /** Effective confidence (degraded by 30% if stale) */
+  const effectiveConfidence = (() => {
+    const baseConf = brief?.meta.confidence_overall ?? 0.2
+    return isStale ? baseConf * 0.7 : baseConf
+  })()
+
   // Field state actions for map initialization
   const initializeZones = useFieldState((s) => s.initializeZones)
   const setReadabilityLevel = useFieldState((s) => s.setReadabilityLevel)
@@ -165,7 +212,8 @@ export default function DashboardPage() {
     revealLabels()
     revealRhythm()
 
-    // Set base intensity for all zones so they're visible
+    // Initialize all zones to dormant state (no fake heat)
+    // Real intensity will come from brief data in the second useEffect
     const baseZones = [
       'gare-nord', 'gare-est', 'gare-lyon', 'saint-lazare', 'montparnasse',
       'bastille', 'oberkampf', 'pigalle', 'marais', 'chatelet',
@@ -173,7 +221,8 @@ export default function DashboardPage() {
       'defense', 'latin', 'republique', 'belleville', 'nation', 'bercy'
     ]
     baseZones.forEach(zoneId => {
-      updateZone(zoneId, { intensity: 0.3, phase: 'echo', volatility: 0.2, confidence: 0.5 })
+      // Dormant state: minimal visibility, no fake heat
+      updateZone(zoneId, { intensity: 0.05, phase: 'dormant', volatility: 0, confidence: 0 })
     })
   }, [initializeZones, setReadabilityLevel, revealZones, revealCorridors, revealLabels, revealRhythm, updateZone])
 
@@ -236,18 +285,19 @@ export default function DashboardPage() {
         ...prev,
         current_move: newMove,
         // Add to history if previous move existed
+        // NOTE: In production, outcomes come from driver confirmation, not simulation
         history: prev.current_move ? [
           {
             id: prev.current_move.id,
             timestamp: prev.current_move.timing.issued_at,
             state: prev.current_move.state,
             target: prev.current_move.target.zone,
-            outcome: Math.random() > 0.3 ? 'followed' : 'ignored',
+            outcome: 'pending' as const, // Unknown until driver confirms
             result: {
-              followed: Math.random() > 0.3,
-              pickup_achieved: Math.random() > 0.4,
-              time_to_pickup_minutes: 4 + Math.floor(Math.random() * 8),
-              earnings_delta: Math.floor(Math.random() * 25) - 5,
+              followed: false, // Pending confirmation
+              pickup_achieved: false,
+              time_to_pickup_minutes: 0,
+              earnings_delta: 0,
             },
           },
           ...prev.history.slice(0, 4), // Keep last 5
@@ -278,20 +328,73 @@ export default function DashboardPage() {
     setTimeout(() => setRulesCopied(false), 2000)
   }, [brief])
 
+  // ════════════════════════════════════════════════════════════════
+  // LOADING SKELETON (shows weekly skeleton immediately)
+  // ════════════════════════════════════════════════════════════════
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-void">
-        <div className="text-text-ghost text-sm">Chargement...</div>
+      <div className="min-h-screen bg-void">
+        <header className="border-b border-border-subtle sticky top-0 bg-void/95 backdrop-blur-sm z-10">
+          <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="w-2 h-2 rounded-full bg-text-ghost animate-pulse" />
+              <span className="text-xs text-text-ghost uppercase tracking-wider">Chargement signaux...</span>
+            </div>
+          </div>
+        </header>
+        <main className="max-w-2xl mx-auto px-4 py-6">
+          {/* Skeleton cards */}
+          <div className="space-y-4">
+            <div className="h-24 rounded-lg bg-surface animate-pulse border border-border-subtle" />
+            <div className="h-16 rounded-lg bg-surface animate-pulse border border-border-subtle" />
+            <div className="h-32 rounded-lg bg-surface animate-pulse border border-border-subtle" />
+          </div>
+          <p className="text-center text-text-ghost text-xs mt-6">
+            Compilation des signaux de la nuit...
+          </p>
+        </main>
       </div>
     )
   }
 
+  // ════════════════════════════════════════════════════════════════
+  // ERROR / BETWEEN-COMPILATIONS STATE
+  // ════════════════════════════════════════════════════════════════
   if (error || !brief) {
+    const hour = new Date().getHours()
+    const isBefore18h = hour < 18
+
     return (
-      <div className="min-h-screen flex items-center justify-center bg-void">
-        <Panel className="p-6">
-          <p className="text-alert text-sm">{error ?? 'Données non disponibles'}</p>
-        </Panel>
+      <div className="min-h-screen bg-void">
+        <header className="border-b border-border-subtle sticky top-0 bg-void/95 backdrop-blur-sm z-10">
+          <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="w-2 h-2 rounded-full bg-calm" />
+              <span className="text-xs text-text-ghost uppercase tracking-wider">
+                {isBefore18h ? 'En attente' : 'Erreur'}
+              </span>
+            </div>
+          </div>
+        </header>
+        <main className="max-w-2xl mx-auto px-4 py-8">
+          <Panel className="p-6 text-center">
+            {isBefore18h ? (
+              <>
+                <p className="text-text-secondary text-sm mb-2">Signaux de ce soir disponibles à 18h</p>
+                <p className="text-text-ghost text-xs">
+                  Les compilations s&apos;exécutent à 18h, 21h et 06h
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-alert text-sm mb-2">{error ?? 'Données non disponibles'}</p>
+                <p className="text-text-ghost text-xs">
+                  Vérifiez votre connexion ou réessayez plus tard
+                </p>
+              </>
+            )}
+          </Panel>
+        </main>
       </div>
     )
   }
@@ -299,23 +402,59 @@ export default function DashboardPage() {
   const gain = estimatePotentialGain(brief)
   const performance = getDriverPerformance('mock-user')
   const lastUpdate = new Date(brief.meta.generated_at)
+  // PASS 6: Show "Dernière MAJ: HH:MM" format
+  const lastUpdateTime = lastUpdate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
   const minutesAgo = Math.floor((Date.now() - lastUpdate.getTime()) / 60000)
   const timeAgo = minutesAgo < 60 ? `${minutesAgo}min` : `${Math.floor(minutesAgo / 60)}h`
 
   return (
     <div className="min-h-screen bg-void">
+      {/* STALE DATA BANNER (PASS 4) */}
+      {isStale && (
+        <div className="bg-intent/10 border-b border-intent/30 px-4 py-2">
+          <p className="max-w-2xl mx-auto text-xs text-intent flex items-center gap-2">
+            <span>▲</span>
+            <span>
+              Dernière mise à jour: {new Date(brief.meta.generated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} — données potentiellement obsolètes
+            </span>
+          </p>
+        </div>
+      )}
+
+      {/* CROSS-MIDNIGHT NOTICE (PASS 4) */}
+      {isCrossMidnight && !isStale && (
+        <div className="bg-calm/10 border-b border-calm/30 px-4 py-2">
+          <p className="max-w-2xl mx-auto text-xs text-calm flex items-center gap-2">
+            <span>◐</span>
+            <span>Données de la nuit — prochaine compilation 06h00</span>
+          </p>
+        </div>
+      )}
+
+      {/* SOURCE FAILURE NOTICE (PASS 4) */}
+      {brief.validation.unknowns.length > 0 && (
+        <div className="bg-alert/10 border-b border-alert/30 px-4 py-2">
+          <p className="max-w-2xl mx-auto text-xs text-alert flex items-center gap-2">
+            <span>!</span>
+            <span>{brief.validation.unknowns.join(' · ')}</span>
+          </p>
+        </div>
+      )}
+
       {/* LAYER 1: ORIENTATION (0-0.5s) - Field State Header */}
       <header className="border-b border-border-subtle sticky top-0 bg-void/95 backdrop-blur-sm z-10">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-signal animate-field-pulse" />
-              <span className="text-xs text-text-secondary uppercase tracking-wider">Champ confirmé</span>
+              <span className={`w-2 h-2 rounded-full ${isEmpty ? 'bg-calm' : isStale ? 'bg-intent' : 'bg-signal'} ${!isEmpty && !isStale ? 'animate-field-pulse' : ''}`} />
+              <span className="text-xs text-text-secondary uppercase tracking-wider">
+                {isEmpty ? 'Phase calme' : isStale ? 'Données obsolètes' : 'Champ confirmé'}
+              </span>
             </div>
             <span className="text-xs text-text-ghost">·</span>
-            <span className="text-xs text-text-ghost">{Math.round(brief.meta.confidence_overall * 100)}%</span>
+            <span className="text-xs text-text-ghost">{Math.round(effectiveConfidence * 100)}%</span>
             <span className="text-xs text-text-ghost">·</span>
-            <span className="text-xs text-text-ghost">{timeAgo}</span>
+            <span className="text-xs text-text-ghost" title={`Dernière MAJ: ${lastUpdateTime}`}>MAJ {lastUpdateTime}</span>
           </div>
           <div className="flex items-center gap-2">
             <Link
@@ -368,7 +507,9 @@ export default function DashboardPage() {
             <div className="rounded-lg border border-border-subtle overflow-hidden bg-surface">
               <div className="px-3 py-2 border-b border-border-subtle flex items-center justify-between">
                 <span className="text-xs text-text-ghost uppercase tracking-wider">Champ spatial</span>
-                <span className="text-xs text-text-ghost">{Math.round((brief?.meta.confidence_overall ?? 0) * 100)}% confiance</span>
+                <span className={`text-xs ${isStale ? 'text-intent' : 'text-text-ghost'}`}>
+                  {Math.round(effectiveConfidence * 100)}% confiance{isStale ? ' ▲' : ''}
+                </span>
               </div>
               <div className="relative" style={{ height: '280px' }}>
                 <ParisFieldMap className="w-full h-full" />
@@ -418,8 +559,61 @@ export default function DashboardPage() {
       {/* Main Content - Mobile-first vertical reading */}
       <main className="max-w-2xl mx-auto px-4 pb-12">
         <AnimatePresence mode="wait">
-          {timeView === 'now' && session && (
-            <FlowActiveView key="now" session={session} gain={gain} />
+          {/* EMPTY STATE (PASS 4 + PASS 5: First-open optimized) */}
+          {isEmpty && timeView === 'now' && (
+            <motion.div key="empty" {...fadeIn} className="space-y-4">
+              {/* Primary field state - instantly visible */}
+              <div className="action-block rounded-lg p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="w-2 h-2 rounded-full bg-calm" />
+                  <span className="text-xs text-calm uppercase tracking-wider">Phase calme</span>
+                </div>
+                {/* Primary action - large, serif, prominent */}
+                <p className="text-3xl font-light text-calm mb-2" style={{ fontFamily: 'var(--font-serif)' }}>
+                  REPOS
+                </p>
+                <p className="text-text-ghost text-sm mb-4">Pas de signal fort — économisez votre énergie</p>
+
+                {/* Next window preview */}
+                {brief.next_block.slots.length > 0 && (
+                  <div className="pt-4 border-t border-border-subtle">
+                    <p className="text-xs text-text-ghost uppercase tracking-wider mb-2">Prochaine fenêtre</p>
+                    <p className="text-lg text-text-primary mb-1">
+                      {brief.next_block.slots[0].window} — {brief.next_block.slots[0].zone}
+                    </p>
+                    <p className="text-xs text-text-ghost mb-3">{brief.next_block.slots[0].reason}</p>
+                    {/* Navigation tap target (PASS 5) */}
+                    <a
+                      href={`https://waze.com/ul?q=${encodeURIComponent(brief.next_block.slots[0].zone + ' Paris')}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => triggerHaptic()}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-calm/10 border border-calm/30 text-calm text-sm"
+                    >
+                      <Navigation className="w-4 h-4" />
+                      <span>Préparer navigation</span>
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              {/* Expected peaks hint */}
+              {brief.horizon_block.expected_peaks.length > 0 && (
+                <div className="px-3 py-3 rounded bg-surface border border-border-subtle">
+                  <p className="text-xs text-text-ghost uppercase tracking-wider mb-2">Pics attendus ce soir</p>
+                  <div className="flex flex-wrap gap-2">
+                    {brief.horizon_block.expected_peaks.slice(0, 3).map((peak, i) => (
+                      <span key={i} className="text-xs px-2 py-1 rounded bg-surface-raised text-text-secondary">
+                        {peak}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          )}
+          {timeView === 'now' && session && !isEmpty && (
+            <FlowActiveView key="now" session={session} gain={gain} isEmpty={isEmpty} isStale={isStale} />
           )}
           {timeView === 'next' && <NextView key="next" block={brief.next_block} dense={denseMode} />}
           {timeView === 'tonight' && <TonightView key="tonight" block={brief.horizon_block} dense={denseMode} />}
@@ -757,9 +951,11 @@ function SaturationBadge({ level }: { level: 'LOW' | 'MED' | 'HIGH' }) {
 interface FlowActiveViewProps {
   session: ShiftSession
   gain: { min: number; max: number; confidence: number }
+  isEmpty?: boolean
+  isStale?: boolean
 }
 
-function FlowActiveView({ session, gain }: FlowActiveViewProps) {
+function FlowActiveView({ session, gain, isEmpty, isStale }: FlowActiveViewProps) {
   const [countdown, setCountdown] = useState(0)
   const move = session.current_move
 
@@ -840,17 +1036,36 @@ function FlowActiveView({ session, gain }: FlowActiveViewProps) {
           </div>
         </div>
 
-        {/* Primary target - THE action (ARCHÉ serif) */}
-        <div className="mb-3">
-          <p className={`text-2xl font-light ${stateColors[move.state]}`} style={{ fontFamily: 'var(--font-serif)' }}>
+        {/* Primary target - THE action (PASS 5: Large serif, 2-second readability) */}
+        <div className="mb-4">
+          <p className={`text-3xl font-light ${stateColors[move.state]}`} style={{ fontFamily: 'var(--font-serif)' }}>
             {isHoldState ? 'Reste ici' : move.target.zone}
           </p>
           {move.target.specifics && (
             <p className="text-sm text-text-ghost mt-1">{move.target.specifics}</p>
           )}
+          {/* WHY explanation - French, concise (PASS 5) */}
+          {move.signals.length > 0 && (
+            <p className="text-xs text-text-secondary mt-2">
+              Pourquoi: {move.signals[0]}
+            </p>
+          )}
         </div>
 
-        {/* Temporal confidence - the key insight */}
+        {/* Navigation button FIRST (PASS 5: Immediately tappable) */}
+        <a
+          href={`https://waze.com/ul?q=${encodeURIComponent(move.target.zone + ' Paris')}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={() => triggerHaptic()}
+          className="flex items-center justify-center gap-2 w-full py-3.5 rounded-lg bg-signal/10 border border-signal/30 text-signal text-sm font-medium hover:bg-signal/20 active:bg-signal/30 mb-4"
+          style={{ transition: 'var(--transition-base)', boxShadow: 'var(--shadow-sm)' }}
+        >
+          <Navigation className="w-4 h-4" />
+          <span>NAVIGUER</span>
+        </a>
+
+        {/* Temporal confidence - secondary info */}
         <div className="mb-4 p-2 rounded bg-surface/50">
           <div className="flex items-center justify-between text-sm mb-1">
             <span className="text-text-ghost">Pickup attendu</span>
@@ -859,11 +1074,14 @@ function FlowActiveView({ session, gain }: FlowActiveViewProps) {
             </span>
           </div>
           <div className="flex items-center justify-between text-sm">
-            <span className="text-text-ghost">Probabilité</span>
-            <span className={move.confidence_label === 'HIGH' ? 'text-signal' : 'text-text-primary'}>
-              {move.confidence_label || 'MODERATE'}
+            <span className="text-text-ghost">Confiance</span>
+            <span className={isStale ? 'text-intent' : move.confidence_label === 'HIGH' ? 'text-signal' : 'text-text-primary'}>
+              {isStale ? `${move.confidence_label || 'MODERATE'} ▲` : move.confidence_label || 'MODERATE'}
             </span>
           </div>
+          {isStale && (
+            <p className="text-xs text-intent mt-2">Données obsolètes — confiance dégradée</p>
+          )}
         </div>
 
         {/* Hold message - temporal confidence */}
@@ -873,28 +1091,6 @@ function FlowActiveView({ session, gain }: FlowActiveViewProps) {
             <span>{move.hold_message}</span>
           </p>
         )}
-
-        {/* Signals - physical, not analytical */}
-        <div className="flex flex-wrap gap-2 mb-4">
-          {move.signals.map((signal, i) => (
-            <span key={i} className="text-xs px-2 py-1 rounded bg-surface text-text-secondary">
-              {signal}
-            </span>
-          ))}
-        </div>
-
-        {/* Action button (ARCHÉ: 400ms + shadow) */}
-        <a
-          href={`https://waze.com/ul?q=${encodeURIComponent(move.target.zone + ' Paris')}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={() => triggerHaptic()}
-          className="flex items-center justify-center gap-2 w-full py-3 rounded-lg bg-signal/10 border border-signal/30 text-signal text-sm font-medium hover:bg-signal/20 active:bg-signal/30"
-          style={{ transition: 'var(--transition-base)', boxShadow: 'var(--shadow-sm)' }}
-        >
-          <Navigation className="w-4 h-4" />
-          <span>Ouvrir navigation</span>
-        </a>
 
         {/* Alternatives */}
         {move.alternatives && move.alternatives.length > 0 && (
@@ -918,11 +1114,13 @@ function FlowActiveView({ session, gain }: FlowActiveViewProps) {
         )}
       </div>
 
-      {/* GAIN confirmation */}
-      <div className="flex items-center justify-between px-1 py-2 text-sm">
-        <span className="text-signal">+{gain.min}€ – {gain.max}€</span>
-        <span className="text-text-ghost">estimé ce soir</span>
-      </div>
+      {/* GAIN confirmation - hidden when empty (PASS 4) */}
+      {!isEmpty && gain.min > 0 && (
+        <div className="flex items-center justify-between px-1 py-2 text-sm">
+          <span className="text-signal">+{gain.min}€ – {gain.max}€</span>
+          <span className="text-text-ghost">EUR/h estimé</span>
+        </div>
+      )}
 
       {/* FLOW MEMORY - Continuity ribbon */}
       {session.history.length > 0 && (

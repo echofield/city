@@ -20,7 +20,6 @@ import { NextResponse } from 'next/server'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-import { MOCK_COMPILED_BRIEF } from '@/lib/flow-engine/mock-data'
 import { orchestrate } from '@/lib/shift-conductor/orchestrator'
 import { compiledBriefAndMoveToFlowState } from '@/lib/flow-engine/flow-state-adapter'
 import { compiledFromCitySignalsPackV1 } from '@/lib/flow-engine/compile-from-pack'
@@ -30,6 +29,53 @@ import { loadWeeklySignals } from '@/lib/city-signals/loadWeeklySignals'
 import { normalizeCitySignalsPack } from '@/lib/city-signals/normalize-pack'
 import type { Ramification, WeeklySkeleton } from '@/types/flow-state'
 import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
+import type { CompiledBrief } from '@/lib/prompts/contracts'
+
+/**
+ * Returns honest degraded state when no data available (PASS 4)
+ */
+function createEmptyBrief(): CompiledBrief {
+  const now = new Date().toISOString()
+  return {
+    meta: {
+      timezone: 'Europe/Paris',
+      generated_at: now,
+      run_mode: 'daily',
+      profile_variant: 'NIGHT_CHASER',
+      confidence_overall: 0.2,
+    },
+    now_block: {
+      window: '0-15min',
+      actions: ['Pas de signal fort — attente données'],
+      zones: [],
+      rule: 'Attente signaux',
+      micro_alerts: [],
+      confidence: 0.2,
+    },
+    next_block: {
+      slots: [],
+      key_transition: 'Données non disponibles',
+    },
+    horizon_block: {
+      hotspots: [],
+      rules: [],
+      expected_peaks: [],
+    },
+    summary: ['Signaux en attente de compilation'],
+    timeline: [],
+    hotspots: [],
+    alerts: [],
+    rules: [],
+    anti_clustering: {
+      principle: '',
+      dispatch_hint: [],
+    },
+    validation: {
+      unknowns: ['Données tonight pack non disponibles'],
+      do_not_assume: [],
+    },
+  }
+}
 
 interface SimulationRequest {
   territory?: string
@@ -63,7 +109,7 @@ export async function POST(request: Request) {
   }
 
   const pack = rawPack ? normalizeCitySignalsPack(rawPack) : null
-  const brief = pack ? compiledFromCitySignalsPackV1(pack) : MOCK_COMPILED_BRIEF
+  const brief = pack ? compiledFromCitySignalsPackV1(pack) : createEmptyBrief()
 
   // Resolve weekly skeleton: use provided or load from Storage
   const weeklySkeleton: WeeklySkeleton | null = weeklyPack ?? await loadWeeklySignals()
