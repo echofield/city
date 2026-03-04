@@ -17,7 +17,7 @@ import {
   engineStateToApiState,
 } from "../types/flow-state";
 import { fetchFlowState, fetchFlowStateMock } from "../api/flow";
-import { computeFlowState } from "./FlowEngine";
+import { computeFlowState, computeContextSignals } from "./FlowEngine";
 import { C, mono, label } from "./theme";
 
 // ── Helpers ──
@@ -305,7 +305,10 @@ export function Dashboard(props: {
           staleTimeoutRef.current = null;
         }
         hasEverSucceededRef.current = true;
-        setFlowState(state);
+        // Merge locally-computed signals (metro status) with API signals
+        const localSignals = computeContextSignals();
+        const mergedSignals = [...localSignals, ...(state.signals ?? [])];
+        setFlowState({ ...state, signals: mergedSignals });
         setDataSource("live");
         setCurrentTime(new Date());
       } catch {

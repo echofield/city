@@ -161,7 +161,7 @@ function computeMetroStatus(): ContextSignal | null {
   return { text: "Metro arrete (reprise ~05h30)", type: "transport" };
 }
 
-function computeContextSignals(): ContextSignal[] {
+export function computeContextSignals(): ContextSignal[] {
   const signals: ContextSignal[] = [];
   const metroStatus = computeMetroStatus();
   if (metroStatus) signals.push(metroStatus);
