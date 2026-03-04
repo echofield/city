@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useNavigate } from "react-router";
 import { FlowMap } from "./FlowMap";
+import { DispatchPanel } from "./DispatchPanel";
 import {
   type FlowState,
   type ActionType,
@@ -251,6 +252,7 @@ export function Dashboard(props: {
   const [entered, setEntered] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("maintenant");
   const [showActivationOverlay, setShowActivationOverlay] = useState(false);
+  const [showDispatch, setShowDispatch] = useState(false);
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
   const sessionStartRef = useRef(Date.now());
   const animFrameRef = useRef(0);
@@ -499,6 +501,25 @@ export function Dashboard(props: {
           >
             {formatTime(currentTime)}
           </span>
+          <button
+            onClick={() => setShowDispatch(true)}
+            className="uppercase tracking-[0.15em]"
+            style={{
+              ...label,
+              fontSize: "0.55rem",
+              color: C.textDim,
+              backgroundColor: "transparent",
+              border: `1px solid ${C.border}`,
+              borderRadius: 3,
+              padding: "4px 10px",
+              cursor: "pointer",
+              transition: "border-color 0.2s ease",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.grayDim)}
+            onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.border)}
+          >
+            DISPATCH
+          </button>
           <button
             onClick={() => navigate("/replay")}
             className="uppercase tracking-[0.15em]"
@@ -943,6 +964,17 @@ export function Dashboard(props: {
           </div>
         </motion.div>
       </div>
+
+      {/* Dispatch Panel */}
+      <AnimatePresence>
+        {showDispatch && (
+          <DispatchPanel
+            flowState={flowState}
+            sessionStartTime={sessionStartRef.current}
+            onClose={() => setShowDispatch(false)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Demo activation overlay */}
       {showActivationOverlay && (
