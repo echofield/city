@@ -205,6 +205,45 @@ function buildZoneMaps(
 }
 
 /** Parse expected_peaks strings like "22:45 Bercy" or "23:15 PSG" */
+
+/**
+ * Compute event lifecycle based on time difference from now.
+ * - maintenant: within 15min of event
+ * - prochain: 15-30min before event
+ * - ce_soir: >30min before event
+ */
+function computeEventLifecycle(eventTime: string): 'maintenant' | 'prochain' | 'ce_soir' {
+  const now = new Date();
+  const today = now.toISOString().split('T')[0];
+
+  // Parse time like "23h15" or "01:00" or "23h"
+  let hours = 0, mins = 0;
+  if (eventTime.includes('h')) {
+    const parts = eventTime.split('h');
+    hours = parseInt(parts[0]) || 0;
+    mins = parseInt(parts[1]) || 0;
+  } else if (eventTime.includes(':')) {
+    const parts = eventTime.split(':');
+    hours = parseInt(parts[0]) || 0;
+    mins = parseInt(parts[1]) || 0;
+  } else {
+    hours = parseInt(eventTime) || 0;
+  }
+
+  // Handle cross-midnight (if event is 00-06 and now is evening, it's tomorrow)
+  let eventDate = new Date(`${today}T${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:00`);
+  if (hours < 6 && now.getHours() >= 18) {
+    eventDate.setDate(eventDate.getDate() + 1);
+  }
+
+  const diffMs = eventDate.getTime() - now.getTime();
+  const diffMins = diffMs / 60000;
+
+  if (diffMins <= 15) return 'maintenant';
+  if (diffMins <= 30) return 'prochain';
+  return 'ce_soir';
+}
+
 function parsePeaks(brief: CompiledBrief): FlowState['peaks'] {
   const peaks: FlowState['peaks'] = []
   const seen = new Set<string>()
@@ -444,6 +483,22 @@ export function compiledBriefAndMoveToFlowState(
   const action = fieldStateToAction(move.state)
   const windowCountdownSec = Math.max(0, move.timing.expiry_seconds ?? 0)
   const windowMinutes = Math.max(1, Math.ceil(windowCountdownSec / 60))
+
+  // Compute countdown target label - what is the timer counting down to?
+  function getCountdownTargetLabel(ws: typeof windowState): string {
+    switch (ws) {
+      case 'active':
+        return 'avant fermeture fenetre'
+      case 'forming':
+        return 'avant prochain pic'
+      case 'closing':
+        return 'avant prochaine transition'
+      case 'stable':
+      default:
+        return 'avant prochain check'
+    }
+  }
+  const countdownTargetLabel = getCountdownTargetLabel(windowState)
 
   const confidence = Math.round(
     (brief.meta.confidence_overall ?? move.confidence ?? 0.5) * 100

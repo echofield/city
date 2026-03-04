@@ -38,6 +38,8 @@ export interface FlowState {
   windowState: WindowState;
   windowLabel: string;
   windowCountdownSec: number;
+  /** What the countdown is counting down to */
+  countdownTargetLabel?: string;
   windowMinutes: number;
   shiftPhase: ShiftPhase;
   shiftProgress: number;
@@ -58,7 +60,7 @@ export interface FlowState {
   sessionEarnings: number;
   signals: { text: string; type: "event" | "weather" | "transport" | "surge" }[];
   upcoming: { time: string; zone: string; saturation: number; earnings: number }[];
-  peaks: { time: string; zone: string; reason: string; score: number }[];
+  peaks: { time: string; zone: string; reason: string; score: number; lifecycle?: 'maintenant' | 'prochain' | 'ce_soir'; venue?: string; affluence?: string }[];
   /** Optional; not in API contract, backend may omit */
   memory?: { time: string; zone: string; captured: boolean }[];
   /** API contract version; future-proof and debug */

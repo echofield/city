@@ -647,6 +647,20 @@ export function Dashboard(props: {
                   >
                     {formatCountdown(flowState.windowCountdownSec)}
                   </span>
+                  {/* Countdown target label */}
+                  {flowState.countdownTargetLabel && (
+                    <span
+                      style={{
+                        ...label,
+                        fontSize: "0.7rem",
+                        color: C.textDim,
+                        letterSpacing: "0.05em",
+                        marginTop: 4,
+                      }}
+                    >
+                      {flowState.countdownTargetLabel}
+                    </span>
+                  )}
 
                   {/* Action word */}
                   <h1

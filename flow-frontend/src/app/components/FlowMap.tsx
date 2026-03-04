@@ -71,10 +71,11 @@ function getZoneColor(
 }
 
 function getHubColor(status: BanlieueHubState["status"]): string {
+  // Banlieue hubs are always return magnets - show green
   switch (status) {
     case "active": return C.green;
-    case "forming": return C.amber;
-    case "dormant": return C.textGhost;
+    case "forming": return C.greenDim; // Green instead of amber
+    case "dormant": return C.greenDim; // Always visible as return magnet
   }
 }
 
@@ -309,7 +310,7 @@ export function FlowMap({
         {/* ── Banlieue Hub Indicators ── */}
         {BANLIEUE_HUBS.map((hub) => {
           const hubState = banlieueHubs?.[hub.id];
-          const color = hubState ? getHubColor(hubState.status) : C.textGhost;
+          const color = hubState ? getHubColor(hubState.status) : C.greenDim; // Always green (return magnet)
           const isActive = hubState?.status === "active";
           const isForming = hubState?.status === "forming";
           const [hx, hy] = hub.edgePos;
@@ -352,7 +353,7 @@ export function FlowMap({
                 cx={hx} cy={hy}
                 r={isActive ? 5 : isForming ? 3.5 : 2.5}
                 fill={color}
-                opacity={isActive ? 0.95 : isForming ? 0.7 : 0.4}
+                opacity={isActive ? 0.95 : isForming ? 0.75 : 0.6}
                 filter={isActive ? "url(#fglow)" : undefined}
               />
               {isActive && (

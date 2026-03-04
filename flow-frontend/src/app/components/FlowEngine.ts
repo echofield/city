@@ -125,29 +125,48 @@ const TERRITORY_IDS = TERRITORIES.map((t) => t.id);
 const CYCLE_DURATION = 300; // 5 min window cycle
 const SHIFT_DURATION = 1500; // 25 min shift arc
 
-// Simulated context signals pool
-const SIGNAL_POOL: ContextSignal[][] = [
-  [
-    { text: "Sortie concert Accor Arena ~23h30", type: "event" },
-    { text: "Pluie prevue +25min", type: "weather" },
-  ],
-  [
-    { text: "Match PSG fin estimee 22h45", type: "event" },
-    { text: "Metro L1 heure creuse", type: "transport" },
-  ],
-  [
-    { text: "Sortie theatre Chatelet", type: "event" },
-    { text: "Surge x1.4 Bastille", type: "surge" },
-  ],
-  [
-    { text: "Derniers metros dans 45min", type: "transport" },
-    { text: "Soiree privee Marais", type: "event" },
-  ],
-  [
-    { text: "Club Pigalle pic 01h-02h", type: "event" },
-    { text: "Ciel degage, pas de pluie", type: "weather" },
-  ],
-];
+/**
+ * Compute honest metro status based on current time.
+ * This is STRUCTURAL data (horaire type), not real-time RATP.
+ */
+function computeMetroStatus(): ContextSignal | null {
+  const now = new Date();
+  const hour = now.getHours();
+  const min = now.getMinutes();
+  const totalMin = hour * 60 + min;
+
+  const METRO_START = 5 * 60 + 30;
+  const METRO_REDUCED = 23 * 60 + 30;
+  const METRO_LAST_WINDOW = 24 * 60 + 30;
+  const METRO_END = 25 * 60 + 15;
+
+  const effectiveMin = hour < 5 ? totalMin + 24 * 60 : totalMin;
+
+  if (effectiveMin < METRO_START) {
+    return { text: "Metro arrete (reprise ~05h30)", type: "transport" };
+  }
+  if (effectiveMin >= METRO_START && effectiveMin < METRO_REDUCED) {
+    return null;
+  }
+  if (effectiveMin >= METRO_REDUCED && effectiveMin < METRO_LAST_WINDOW) {
+    const minsToLast = METRO_LAST_WINDOW - effectiveMin;
+    if (minsToLast <= 60) {
+      return { text: , type: "transport" };
+    }
+    return { text: "Metro frequence reduite", type: "transport" };
+  }
+  if (effectiveMin >= METRO_LAST_WINDOW && effectiveMin < METRO_END) {
+    return { text: "Derniers metros en cours", type: "transport" };
+  }
+  return { text: "Metro arrete (reprise ~05h30)", type: "transport" };
+}
+
+function computeContextSignals(): ContextSignal[] {
+  const signals: ContextSignal[] = [];
+  const metroStatus = computeMetroStatus();
+  if (metroStatus) signals.push(metroStatus);
+  return signals;
+}
 
 // ── Helpers ──
 
@@ -353,7 +372,7 @@ export function computeFlowState(sessionStartTime: number): FlowState {
   const confidence = Math.min(98, Math.max(55, Math.round(baseConfidence + confNoise)));
 
   // ── Context signals ──
-  const signalSet = SIGNAL_POOL[cycleIndex % SIGNAL_POOL.length];
+  const signalSet = computeContextSignals();
 
   // ── Window memory (simulated last 3 windows) ──
   const memory: WindowMemory[] = [];
