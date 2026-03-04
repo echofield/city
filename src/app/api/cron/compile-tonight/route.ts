@@ -155,11 +155,22 @@ export async function POST(request: NextRequest) {
       },
     }
 
-    // Write to disk
+    // Write to disk (dev / local)
     const root = path.join(process.cwd(), 'data', 'city-signals', 'tonight')
     fs.mkdirSync(root, { recursive: true })
     const filePath = path.join(root, `${date}.paris-idf.json`)
     fs.writeFileSync(filePath, JSON.stringify(pack, null, 2), 'utf-8')
+
+    // Write to Supabase Storage (production — API reads from here)
+    const STORAGE_BUCKET = 'flow-packs'
+    const storagePath = `tonight/${date}.paris-idf.json`
+    if (isStorageConfigured()) {
+      try {
+        await storageWriteJson(STORAGE_BUCKET, storagePath, pack)
+      } catch (err) {
+        console.error('[cron] Supabase Storage write failed:', err)
+      }
+    }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2)
 

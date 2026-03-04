@@ -67,6 +67,8 @@ export interface FlowState {
   zoneStates: Record<string, ZoneStateApi>;
 
   earningsEstimate: [number, number];
+  /** Intensity label for display: FORT | MODERE | FAIBLE (avoids showing wrong EUR/h before calibration) */
+  earningsIntensity: 'FORT' | 'MODERE' | 'FAIBLE';
   sessionEarnings: number;
 
   signals: {

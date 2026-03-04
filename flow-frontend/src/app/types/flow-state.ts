@@ -57,6 +57,8 @@ export interface FlowState {
   zoneSaturation: Record<string, number>;
   zoneState: Record<string, ZoneStateApi>;
   earningsEstimate: [number, number];
+  /** Intensity label: FORT | MODERE | FAIBLE */
+  earningsIntensity?: "FORT" | "MODERE" | "FAIBLE";
   sessionEarnings: number;
   signals: { text: string; type: "event" | "weather" | "transport" | "surge" }[];
   upcoming: { time: string; zone: string; saturation: number; earnings: number }[];
@@ -148,6 +150,7 @@ export function engineStateToApiState(engine: {
     zoneSaturation: (e.zoneSaturation as Record<string, number>) ?? {},
     zoneState: engineZoneStateToApi((e.zoneStates as Record<string, string>) ?? {}),
     earningsEstimate: (e.earningsEstimate as [number, number]) ?? [0, 0],
+    earningsIntensity: (e.earningsIntensity as "FORT" | "MODERE" | "FAIBLE") ?? "MODERE",
     sessionEarnings: (e.sessionEarnings as number) ?? 0,
     signals: (e.signals as FlowState["signals"]) ?? [],
     upcoming: (e.upcoming as FlowState["upcoming"]) ?? [],

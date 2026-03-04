@@ -69,6 +69,7 @@ export interface FlowState {
 
   // Money
   earningsEstimate: [number, number]; // range EUR/h
+  earningsIntensity: "FORT" | "MODERE" | "FAIBLE";
   sessionEarnings: number; // simulated cumulative
 
   // Context
@@ -361,9 +362,12 @@ export function computeFlowState(sessionStartTime: number): FlowState {
   earningsLow += Math.round(Math.sin(totalSeconds * 0.01) * 3);
   earningsHigh += Math.round(Math.sin(totalSeconds * 0.007) * 4);
 
+  const avgRate = (earningsLow + earningsHigh) / 2;
+  const earningsIntensity: "FORT" | "MODERE" | "FAIBLE" =
+    avgRate >= 40 ? "FORT" : avgRate >= 25 ? "MODERE" : "FAIBLE";
+
   // Session cumulative (simulated)
   const sessionHours = sessionSeconds / 3600;
-  const avgRate = (earningsLow + earningsHigh) / 2;
   const sessionEarnings = Math.round(sessionHours * avgRate * (0.85 + shiftProgress * 0.3));
 
   // ── Confidence ──
@@ -455,6 +459,7 @@ export function computeFlowState(sessionStartTime: number): FlowState {
     zoneStates,
     zoneSaturation,
     earningsEstimate: [earningsLow, earningsHigh],
+    earningsIntensity,
     sessionEarnings,
     signals: signalSet,
     memory,

@@ -28,6 +28,8 @@
 
 # city signals (daily packs; optional: remove to commit sample packs)
 /data/
+# allow weekly skeleton so cron has patterns on Vercel
+!/data/city-signals/weekly/skeleton.json
 
 # debug
 npm-debug.log*

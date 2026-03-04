@@ -244,34 +244,62 @@ function computeEventLifecycle(eventTime: string): 'maintenant' | 'prochain' | '
   return 'ce_soir';
 }
 
+/** Normalize time string to "HHh" for dedup key */
+function normalizePeakTime(t: string): string {
+  if (!t || t.length <= 2) return t ? `${t}h` : ''
+  return t.replace(':', 'h').replace(/\s/g, '')
+}
+
+/** Generate a contextual reason when none is set (never show empty or "Données ville") */
+function peakReasonFallback(zone: string, timeStr: string): string {
+  const dayNames = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi']
+  const d = new Date()
+  const day = dayNames[d.getDay()]
+  return `Pic ${timeStr || 'soir'} — ${zone}, structure ${day}`
+}
+
 function parsePeaks(brief: CompiledBrief): FlowState['peaks'] {
   const peaks: FlowState['peaks'] = []
   const seen = new Set<string>()
+  const hotspots = brief.horizon_block?.hotspots ?? []
+
+  /** Find best reason for a zone: from hotspot or generated */
+  function reasonForZone(zone: string, timeStr: string, fromHotspot?: string): string {
+    let reason = (fromHotspot ?? '').trim()
+    if (reason && reason !== 'Données ville') return reason
+    const h = hotspots.find((x) => x.zone === zone)
+    if (h?.why?.trim() && h.why !== 'Données ville') return h.why.trim()
+    return peakReasonFallback(zone, timeStr)
+  }
 
   for (const raw of brief.horizon_block?.expected_peaks ?? []) {
     const match = raw.match(/^(\d{1,2}:?\d{0,2})\s+(.+)$/) ?? [null, raw, '']
     const time = match[1] ?? raw
-    const zone = match[2] ?? ''
-    const key = `${time}-${zone}`
+    const zone = (match[2] ?? '').trim()
+    const normalizedTime = time.length <= 2 ? `${time}h` : time.replace(':', 'h')
+    const key = `${normalizePeakTime(time)}-${zone}`
     if (seen.has(key)) continue
     seen.add(key)
     peaks.push({
-      time: time.length <= 2 ? `${time}h` : time.replace(':', 'h'),
+      time: normalizedTime,
       zone,
-      reason: '',
+      reason: reasonForZone(zone, normalizedTime),
       score: 75,
     })
   }
 
-  for (const h of brief.horizon_block?.hotspots ?? []) {
-    const key = `${h.window}-${h.zone}`
+  for (const h of hotspots) {
+    const [start] = h.window.split('-')
+    const startTrim = start?.trim() ?? ''
+    const normalizedTime = startTrim.replace(':', 'h') || '20h'
+    const key = `${normalizedTime}-${h.zone}`
     if (seen.has(key)) continue
     seen.add(key)
-    const [start] = h.window.split('-')
+    const reason = reasonForZone(h.zone, normalizedTime, h.why ?? '')
     peaks.push({
-      time: start?.trim() ?? h.window,
+      time: normalizedTime,
       zone: h.zone,
-      reason: h.why ?? '',
+      reason,
       score: h.score ?? 70,
     })
   }
@@ -305,35 +333,47 @@ function buildSignals(brief: CompiledBrief): FlowState['signals'] {
   return signals.slice(0, 8)
 }
 
-/** Build upcoming from timeline or next_block.slots */
+/** Build upcoming from timeline or next_block.slots (deduplicated by time+zone) */
 function buildUpcoming(brief: CompiledBrief): FlowState['upcoming'] {
-  // Base rate: 25-35 EUR/h Paris night, derive from confidence
   const baseRate = 28
   const confidenceMultiplier = brief.meta.confidence_overall ?? 0.7
+  const seen = new Set<string>()
+  const out: FlowState['upcoming'] = []
+
+  function push(time: string, zone: string, saturation: number, earnings: number) {
+    const key = `${time}-${zone}`
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push({ time, zone, saturation, earnings })
+  }
 
   if (brief.timeline?.length) {
-    return brief.timeline.slice(0, 6).map((t) => {
-      // Earnings derived from saturation risk (higher saturation = more competition = lower earnings)
+    for (const t of brief.timeline.slice(0, 8)) {
       const satRisk = t.saturation_risk === 'HIGH' ? 0.8 : t.saturation_risk === 'MED' ? 1.0 : 1.15
       const earnings = Math.round(baseRate * satRisk * confidenceMultiplier)
-      return {
-        time: t.start ?? '',
-        zone: t.primary_zone ?? '',
-        saturation: t.saturation_risk === 'HIGH' ? 80 : t.saturation_risk === 'MED' ? 50 : 25,
-        earnings,
-      }
-    })
+      push(
+        t.start ?? '',
+        t.primary_zone ?? '',
+        t.saturation_risk === 'HIGH' ? 80 : t.saturation_risk === 'MED' ? 50 : 25,
+        earnings
+      )
+      if (out.length >= 6) break
+    }
+    return out
   }
-  return (brief.next_block.slots ?? []).slice(0, 6).map((s) => {
+  for (const s of brief.next_block.slots ?? []) {
     const satRisk = s.saturation === 'HIGH' ? 0.8 : s.saturation === 'MED' ? 1.0 : 1.15
     const earnings = Math.round(baseRate * satRisk * confidenceMultiplier)
-    return {
-      time: s.window?.split('-')[0] ?? '',
-      zone: s.zone,
-      saturation: s.saturation === 'HIGH' ? 80 : s.saturation === 'MED' ? 50 : 25,
-      earnings,
-    }
-  })
+    const time = s.window?.split('-')[0]?.trim() ?? ''
+    push(
+      time,
+      s.zone,
+      s.saturation === 'HIGH' ? 80 : s.saturation === 'MED' ? 50 : 25,
+      earnings
+    )
+    if (out.length >= 6) break
+  }
+  return out
 }
 
 /** Zone name aliases to centroid IDs */
@@ -517,12 +557,23 @@ export function compiledBriefAndMoveToFlowState(
   const avgScore = topHotspots.length
     ? topHotspots.reduce((s, h) => s + h.score, 0) / topHotspots.length
     : 50
-  const mult = (avgScore / 100) * (brief.meta.confidence_overall ?? 0.8)
-  const earningsEstimate: [number, number] = [
-    Math.round(25 * mult * 0.8),
-    Math.round(25 * mult * 1.4),
-  ]
+  const conf = brief.meta.confidence_overall ?? 0.8
+  const mult = Math.min(1, (avgScore / 100) * conf)
+  const PARIS_NIGHT_MIN = 18
+  const PARIS_NIGHT_MAX = 35
+  const rawLow = Math.round(28 * mult * 0.85)
+  const rawHigh = Math.round(28 * mult * 1.25)
+  const low = Math.max(PARIS_NIGHT_MIN, Math.min(rawLow, PARIS_NIGHT_MAX - 1))
+  const high = Math.max(low + 1, Math.min(PARIS_NIGHT_MAX, Math.max(rawHigh, rawLow + 1)))
+  const earningsEstimate: [number, number] = [low, high]
   const sessionEarnings = Math.round(earningsEstimate[0] * (sessionSeconds / 3600) * 10) / 10
+
+  // Intensity for display: avoid showing wrong EUR/h before calibration
+  const signalCount = (brief.hotspots?.length ?? 0) + (brief.timeline?.length ?? 0) + (brief.horizon_block?.hotspots?.length ?? 0)
+  const earningsIntensity: 'FORT' | 'MODERE' | 'FAIBLE' =
+    avgScore >= 70 && signalCount >= 3 ? 'FORT'
+    : avgScore >= 45 || signalCount >= 1 ? 'MODERE'
+    : 'FAIBLE'
 
   // Build upcoming and peaks with optional distance enrichment
   let upcoming = buildUpcoming(brief)
@@ -567,6 +618,7 @@ export function compiledBriefAndMoveToFlowState(
     zoneState,
     zoneStates: zoneState, // alias for frontend compatibility
     earningsEstimate,
+    earningsIntensity,
     sessionEarnings,
     signals: buildSignals(brief),
     upcoming,

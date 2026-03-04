@@ -707,13 +707,18 @@ export function Dashboard(props: {
                           ...mono,
                           fontSize: "clamp(1rem, 2.5vw, 1.3rem)",
                           fontWeight: 500,
-                          color: flowState.action === "move" ? C.green : C.amber,
+                          color:
+                            (flowState.earningsIntensity ?? "MODERE") === "FORT"
+                              ? C.green
+                              : (flowState.earningsIntensity ?? "MODERE") === "MODERE"
+                                ? C.amber
+                                : C.textDim,
                         }}
                       >
-                        {flowState.earningsEstimate[0]}-{flowState.earningsEstimate[1]}
+                        {flowState.earningsIntensity ?? "MODERE"}
                       </span>
                       <span style={{ ...label, fontSize: "0.6rem", fontWeight: 300, color: C.textDim }}>
-                        EUR/h estime
+                        Intensite
                       </span>
                     </div>
                   </div>
@@ -820,22 +825,32 @@ export function Dashboard(props: {
                       <span className="w-14" style={{ ...mono, color: C.textDim, fontSize: "0.55rem" }}>HEURE</span>
                       <span className="flex-1" style={{ ...label, color: C.textDim, fontSize: "0.55rem" }}>ZONE</span>
                       <span className="w-20" style={{ ...label, color: C.textDim, fontSize: "0.55rem" }}>SAT.</span>
-                      <span className="w-16 text-right" style={{ ...mono, color: C.textDim, fontSize: "0.55rem" }}>EUR/H</span>
+                      <span className="w-16 text-right" style={{ ...mono, color: C.textDim, fontSize: "0.55rem" }}>INT.</span>
                     </div>
-                    {flowState.upcoming.map((slot, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center gap-3 px-3 py-2.5"
-                        style={{ borderBottom: `1px solid ${C.border}` }}
-                      >
-                        <span className="w-14" style={{ ...mono, color: C.textMid }}>{slot.time}</span>
-                        <span className="flex-1" style={{ ...label, color: C.text }}>{slot.zone}</span>
-                        <span className="w-20"><SatBar value={slot.saturation} /></span>
-                        <span className="w-16 text-right" style={{ ...mono, color: slot.earnings > 35 ? C.green : C.textMid }}>
-                          {slot.earnings}
-                        </span>
-                      </div>
-                    ))}
+                    {flowState.upcoming.map((slot, i) => {
+                      const slotIntensity = slot.earnings >= 30 ? "FORT" : slot.earnings >= 20 ? "MODERE" : "FAIBLE";
+                      return (
+                        <div
+                          key={i}
+                          className="flex items-center gap-3 px-3 py-2.5"
+                          style={{ borderBottom: `1px solid ${C.border}` }}
+                        >
+                          <span className="w-14" style={{ ...mono, color: C.textMid }}>{slot.time}</span>
+                          <span className="flex-1" style={{ ...label, color: C.text }}>{slot.zone}</span>
+                          <span className="w-20"><SatBar value={slot.saturation} /></span>
+                          <span
+                            className="w-16 text-right"
+                            style={{
+                              ...mono,
+                              fontSize: "0.7rem",
+                              color: slotIntensity === "FORT" ? C.green : slotIntensity === "MODERE" ? C.amber : C.textDim,
+                            }}
+                          >
+                            {slotIntensity}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </motion.div>
               )}

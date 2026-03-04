@@ -1,0 +1,136 @@
+{
+  "patterns": [
+    {
+      "id": "bastille-bars",
+      "name": "Bars Bastille / Oberkampf",
+      "dayOfWeek": [4, 5, 6],
+      "window": { "start": "22:00", "end": "02:00" },
+      "zones": ["Bastille", "Oberkampf", "République"],
+      "corridors": ["est"],
+      "confidence": 0.85,
+      "intensity": 4,
+      "description": "Bars IX/XI — dernier métro Oberkampf, sorties nocturnes"
+    },
+    {
+      "id": "pigalle-montmartre",
+      "name": "Pigalle / Montmartre nuit",
+      "dayOfWeek": [4, 5, 6],
+      "window": { "start": "23:00", "end": "03:00" },
+      "zones": ["Pigalle", "Montmartre"],
+      "corridors": ["nord"],
+      "confidence": 0.8,
+      "intensity": 4,
+      "description": "Pic nocturne vendredi/samedi — bars Pigalle, flux Montmartre"
+    },
+    {
+      "id": "opera-grands-boulevards",
+      "name": "Opéra / Grands Boulevards",
+      "dayOfWeek": [1, 2, 3, 4, 5, 6],
+      "window": { "start": "20:00", "end": "00:00" },
+      "zones": ["Opéra", "Saint-Lazare"],
+      "corridors": ["ouest", "centre"],
+      "confidence": 0.75,
+      "intensity": 3,
+      "description": "Sorties bureaux et restaurants — gare Saint-Lazare, Opéra"
+    },
+    {
+      "id": "chatelet-marais",
+      "name": "Châtelet / Marais",
+      "dayOfWeek": [4, 5, 6],
+      "window": { "start": "22:30", "end": "01:30" },
+      "zones": ["Châtelet", "Marais", "Halles"],
+      "corridors": ["centre"],
+      "confidence": 0.8,
+      "intensity": 4,
+      "description": "Marais bars et sorties — correspondances Châtelet, dernier métro"
+    },
+    {
+      "id": "gare-du-nord-arrivees",
+      "name": "Gare du Nord — arrivées TGV / Thalys",
+      "dayOfWeek": [0, 1, 2, 3, 4, 5, 6],
+      "window": { "start": "21:00", "end": "00:30" },
+      "zones": ["Gare du Nord", "Gare de l'Est"],
+      "corridors": ["nord"],
+      "confidence": 0.9,
+      "intensity": 5,
+      "description": "Derniers TGV + Thalys — sortie voyageurs Gare du Nord"
+    },
+    {
+      "id": "gare-de-lyon-soir",
+      "name": "Gare de Lyon — flux soir",
+      "dayOfWeek": [0, 1, 2, 3, 4, 5, 6],
+      "window": { "start": "19:30", "end": "23:00" },
+      "zones": ["Gare de Lyon", "Bercy"],
+      "corridors": ["est"],
+      "confidence": 0.8,
+      "intensity": 3,
+      "description": "Arrivées TGV sud-est — flux sortie gare, Bercy"
+    },
+    {
+      "id": "cdg-late",
+      "name": "CDG — vols tardifs",
+      "dayOfWeek": [0, 1, 2, 3, 4, 5, 6],
+      "window": { "start": "22:00", "end": "02:00" },
+      "zones": ["Gare du Nord", "Châtelet"],
+      "corridors": ["nord"],
+      "confidence": 0.7,
+      "intensity": 3,
+      "description": "Navette CDG / Roissy — dépose centre, retour nord"
+    },
+    {
+      "id": "orly-nuit",
+      "name": "Orly — vols nuit",
+      "dayOfWeek": [0, 1, 2, 3, 4, 5, 6],
+      "window": { "start": "23:00", "end": "01:30" },
+      "zones": ["Montparnasse", "Denfert"],
+      "corridors": ["sud"],
+      "confidence": 0.65,
+      "intensity": 2,
+      "description": "Orly nocturne — flux Montparnasse / Denfert"
+    },
+    {
+      "id": "vendredi-soir-est",
+      "name": "Vendredi soir — axe est",
+      "dayOfWeek": [5],
+      "window": { "start": "23:00", "end": "02:00" },
+      "zones": ["Bastille", "Nation", "Gare de Lyon"],
+      "corridors": ["est"],
+      "confidence": 0.8,
+      "intensity": 4,
+      "description": "Structure hebdo vendredi — bars IX/XII, dernier métro"
+    },
+    {
+      "id": "samedi-marais",
+      "name": "Samedi Marais / Bastille",
+      "dayOfWeek": [6],
+      "window": { "start": "00:00", "end": "03:00" },
+      "zones": ["Marais", "Bastille", "Châtelet"],
+      "corridors": ["centre", "est"],
+      "confidence": 0.85,
+      "intensity": 4,
+      "description": "Pic nocturne samedi — bars Marais/Bastille, fermeture 2h"
+    },
+    {
+      "id": "dimanche-gares",
+      "name": "Dimanche — retours gares",
+      "dayOfWeek": [0],
+      "window": { "start": "21:00", "end": "00:00" },
+      "zones": ["Gare du Nord", "Gare de Lyon", "Montparnasse"],
+      "corridors": ["nord", "est", "sud"],
+      "confidence": 0.75,
+      "intensity": 3,
+      "description": "Retours dimanche soir — flux gares TGV"
+    },
+    {
+      "id": "semaine-sortie-resto",
+      "name": "Semaine — sortie resto 21h-23h",
+      "dayOfWeek": [1, 2, 3, 4],
+      "window": { "start": "21:00", "end": "23:30" },
+      "zones": ["Opéra", "Châtelet", "Marais", "Saint-Lazare"],
+      "corridors": ["centre", "ouest"],
+      "confidence": 0.7,
+      "intensity": 3,
+      "description": "Sortie resto semaine — centre et gares"
+    }
+  ]
+}

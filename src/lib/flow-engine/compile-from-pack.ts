@@ -141,7 +141,7 @@ export function compiledFromCitySignalsPackV1(pack: CitySignalsPackV1): Compiled
     horizon_block: {
       hotspots: hotspots.length
         ? hotspots.map(h => ({ zone: h.zone, window: h.window, score: h.score, why: h.why.join(', ') }))
-        : [{ zone: firstZone, window: '20:00-23:00', score: Math.round(60 * baseConfidence), why: 'Données ville' }],
+        : [{ zone: firstZone, window: '20:00-23:00', score: Math.round(60 * baseConfidence), why: `Flux habituel — ${firstZone}, données temps réel` }],
       rules: ['Rester en zone recommandée', 'Éviter saturation'],
       expected_peaks: expectedPeaks.length ? expectedPeaks : [`23:00 ${firstZone}`],
     },
@@ -165,7 +165,7 @@ export function compiledFromCitySignalsPackV1(pack: CitySignalsPackV1): Compiled
         zone: firstZone,
         score: Math.round(60 * baseConfidence), // Derived, not hardcoded
         window: '20:00–23:00',
-        why: ['Données city signals'],
+        why: [`Flux habituel — ${firstZone}`],
         saturation_risk: 'MED',
         alternatives: [secondZone],
         pickup_notes: [],

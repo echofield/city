@@ -117,6 +117,7 @@ function getMockFlowState(sessionStart?: number): FlowState {
     zoneState,
     zoneStates: zoneState,
     earningsEstimate: [0, 0],
+    earningsIntensity: 'FAIBLE',
     sessionEarnings: 0,
     signals: [
       { text: '⚠️ MODE TEST — données simulées', type: 'event' },
