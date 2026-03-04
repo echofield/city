@@ -87,3 +87,45 @@ export async function storageFetchJson<T>(
 export function isStorageConfigured(): boolean {
   return !!(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
 }
+
+/**
+ * Write JSON to Supabase Storage private bucket.
+ * @param bucket - Storage bucket name (e.g., 'flow-packs')
+ * @param objectPath - Path within bucket (e.g., 'tonight/2026-03-04.paris-idf.json')
+ * @param data - Object to serialize as JSON
+ * @returns true if successful
+ * @throws StorageFetchError for non-200 responses
+ */
+export async function storageWriteJson<T>(
+  bucket: string,
+  objectPath: string,
+  data: T
+): Promise<boolean> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    console.warn('[Storage] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY - cannot write')
+    return false
+  }
+
+  const url = `${SUPABASE_URL}/storage/v1/object/${bucket}/${objectPath}`
+  const body = JSON.stringify(data, null, 2)
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      'x-upsert': 'true',
+    },
+    body,
+  })
+
+  if (!res.ok) {
+    const errorBody = await res.text()
+    console.error(`[Storage] Write failed: ${res.status} ${res.statusText}`, errorBody)
+    throw new StorageFetchError(res.status, res.statusText, errorBody)
+  }
+
+  console.log(`[Storage] Written: ${bucket}/${objectPath}`)
+  return true
+}

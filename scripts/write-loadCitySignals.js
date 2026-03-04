@@ -1,14 +1,15 @@
-/**
+const fs = require('fs');
+
+const content = `/**
  * Load CitySignalsPackV1 from Supabase Storage (flow-packs bucket).
  * Falls back to local disk in development mode only.
  *
  * Priority:
- *   1. Tonight pack (v1.5): data/city-signals/tonight/{date}.paris-idf.json
- *   2. Daily pack: data/city-signals/daily/{date}.paris-idf.json
- *   3. Supabase Storage
- *   4. Events compilation fallback
- *
- * Storage path: flow-packs/daily/{YYYY-MM-DD}.paris-idf.json
+ *   1. Tonight pack (v1.5) from Supabase Storage: flow-packs/tonight/{date}.paris-idf.json
+ *   2. Tonight pack from local disk (dev only)
+ *   3. Daily pack from Supabase Storage: flow-packs/daily/{date}.paris-idf.json
+ *   4. Local disk (dev only)
+ *   5. Events compilation fallback
  */
 
 import * as fs from 'fs'
@@ -26,71 +27,46 @@ const DAILY_DIR = path.join(SIGNALS_DIR, 'daily')
 const TONIGHT_DIR = path.join(SIGNALS_DIR, 'tonight')
 const EVENTS_DIR = path.join(SIGNALS_DIR, 'events')
 
-/**
- * Get today's date in Europe/Paris timezone as YYYY-MM-DD
- */
 function getTodayParis(): string {
   return new Intl.DateTimeFormat('sv-SE', {
     timeZone: 'Europe/Paris',
   }).format(new Date())
 }
 
-/**
- * Get tonight's date (handles cross-midnight)
- * Before 06:00 → return yesterday's date
- */
 function getTonightParis(): string {
   const now = new Date()
   const parisTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }))
   const hour = parisTime.getHours()
-
-  // If before 06:00, we're still in "last night"
   if (hour < 6) {
     parisTime.setDate(parisTime.getDate() - 1)
   }
-
   return new Intl.DateTimeFormat('sv-SE', {
     timeZone: 'Europe/Paris',
   }).format(parisTime)
 }
 
-/**
- * Load daily pack for the given date (YYYY-MM-DD).
- * If date omitted, use today (Europe/Paris).
- *
- * Priority:
- *   1. Tonight pack (v1.5): data/city-signals/tonight/{date}.paris-idf.json
- *   2. Supabase Storage: flow-packs/daily/{date}.paris-idf.json
- *   3. Local disk (dev only): data/city-signals/daily/{date}.paris-idf.json
- *   4. Local disk legacy (dev only): data/city-signals/{date}.json
- *   5. Events compilation fallback
- */
 export async function loadCitySignals(date?: string): Promise<CitySignalsPackV1 | null> {
   const targetDate = date ?? getTodayParis()
   const tonightDate = getTonightParis()
 
-  // 1. Try tonight pack first (v1.5 real signals)
+  // 1. Try tonight pack first - check Supabase then disk
   const tonightPack = await loadTonightPackAsync(tonightDate)
   if (tonightPack) {
-    console.log(`[loadCitySignals] Source: Tonight pack v1.5 (${tonightDate})`)
     return tonightPackToCitySignalsPack(tonightPack)
   }
 
-  const storagePath = `daily/${targetDate}.paris-idf.json`
+  const storagePath = \\\`daily/\\\${targetDate}.paris-idf.json\\\`
 
-  // 2. Try Supabase Storage
+  // 2. Try Supabase Storage for daily pack
   if (isStorageConfigured()) {
     try {
       const pack = await storageFetchJson<CitySignalsPackV1>(STORAGE_BUCKET, storagePath)
       if (pack) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`[loadCitySignals] Source: Supabase Storage (${storagePath})`)
-        }
+        console.log(\\\`[loadCitySignals] Source: Supabase Storage daily (\\\${storagePath})\\\`)
         return pack
       }
     } catch (err) {
       console.error('[loadCitySignals] Storage fetch error:', err)
-      // Fall through to disk fallback in dev
     }
   }
 
@@ -98,102 +74,81 @@ export async function loadCitySignals(date?: string): Promise<CitySignalsPackV1 
   if (process.env.NODE_ENV === 'development') {
     const diskPack = loadFromDisk(targetDate)
     if (diskPack) {
-      console.log(`[loadCitySignals] Source: Local disk fallback`)
+      console.log('[loadCitySignals] Source: Local disk fallback')
       return diskPack
     }
   }
 
-  // 4. Events compilation fallback — try to compile from events calendar
+  // 4. Events compilation fallback
   const compiledPack = await loadAndCompileFromEvents(targetDate)
   if (compiledPack) {
-    console.log(`[loadCitySignals] Source: Compiled from events calendar`)
+    console.log('[loadCitySignals] Source: Compiled from events calendar')
     return compiledPack
   }
 
   return null
 }
 
-/**
- * Load tonight pack from Supabase Storage or disk (v1.5)
- */
 async function loadTonightPackAsync(date: string): Promise<TonightPack | null> {
-  // Try Supabase Storage first (production)
+  // 1. Try Supabase Storage first (production)
   if (isStorageConfigured()) {
     try {
-      const storagePath = `tonight/${date}.paris-idf.json`
+      const storagePath = \\\`tonight/\\\${date}.paris-idf.json\\\`
       const data = await storageFetchJson<TonightPack>(STORAGE_BUCKET, storagePath)
       if (data && isTonightPack(data)) {
-        console.log(`[loadCitySignals] Source: Supabase tonight pack (${date})`)
+        console.log(\\\`[loadCitySignals] Source: Supabase Storage tonight pack (\\\${date})\\\`)
         const compiledAt = new Date(data.compiledAt)
         const ageHours = (Date.now() - compiledAt.getTime()) / (1000 * 60 * 60)
         if (ageHours > 6) {
-          console.warn(`[loadCitySignals] Tonight pack ${ageHours.toFixed(1)}h old (stale)`)
+          console.warn(\\\`[loadCitySignals] Tonight pack is \\\${ageHours.toFixed(1)}h old (stale)\\\`)
           data.meta.stale = true
         }
         return data
       }
     } catch (err) {
-      console.error('[loadCitySignals] Supabase tonight pack error:', err)
+      console.error('[loadCitySignals] Supabase Storage tonight pack error:', err)
     }
   }
-  // Fallback to local disk
-  return loadTonightPack(date)
+
+  // 2. Fallback to local disk
+  return loadTonightPackFromDisk(date)
 }
 
-/**
- * Load tonight pack from disk (v1.5)
- */
-function loadTonightPack(date: string): TonightPack | null {
-  const tonightPath = path.join(TONIGHT_DIR, `${date}.paris-idf.json`)
-
+function loadTonightPackFromDisk(date: string): TonightPack | null {
+  const tonightPath = path.join(TONIGHT_DIR, \\\`\\\${date}.paris-idf.json\\\`)
   if (!fs.existsSync(tonightPath)) {
     return null
   }
-
   try {
     const raw = fs.readFileSync(tonightPath, 'utf-8')
     const data = JSON.parse(raw)
-
     if (isTonightPack(data)) {
-      // Check if pack is too old (> 6 hours)
+      console.log(\\\`[loadCitySignals] Source: Local disk tonight pack (\\\${date})\\\`)
       const compiledAt = new Date(data.compiledAt)
       const ageHours = (Date.now() - compiledAt.getTime()) / (1000 * 60 * 60)
-
       if (ageHours > 6) {
-        console.warn(`[loadCitySignals] Tonight pack is ${ageHours.toFixed(1)}h old (stale)`)
-        // Still use it but mark as degraded
+        console.warn(\\\`[loadCitySignals] Tonight pack is \\\${ageHours.toFixed(1)}h old (stale)\\\`)
         data.meta.stale = true
       }
-
       return data
     }
   } catch (err) {
     console.error('[loadCitySignals] Tonight pack parse error:', err)
   }
-
   return null
 }
 
-/**
- * Load events calendar and compile for the given date
- */
 async function loadAndCompileFromEvents(targetDate: string): Promise<CitySignalsPackV1 | null> {
-  // Extract month for events file lookup (e.g., "2026-03")
   const monthKey = targetDate.slice(0, 7)
-
-  // Try Supabase Storage first
   if (isStorageConfigured()) {
     try {
-      // Try month-specific events file
-      const eventsPath = `events/${monthKey}-events.json`
+      const eventsPath = \\\`events/\\\${monthKey}-events.json\\\`
       const events = await storageFetchJson<BanlieueEvent[]>(STORAGE_BUCKET, eventsPath)
       if (events && events.length > 0) {
         const { pack, ramifications } = compileEventsForDate(events, targetDate)
         return mergePackWithRamifications(pack, ramifications) as CitySignalsPackV1
       }
-
-      // Try generic banlieue events file
-      const genericPath = `events/banlieue-events.json`
+      const genericPath = 'events/banlieue-events.json'
       const genericEvents = await storageFetchJson<BanlieueEvent[]>(STORAGE_BUCKET, genericPath)
       if (genericEvents && genericEvents.length > 0) {
         const { pack, ramifications } = compileEventsForDate(genericEvents, targetDate)
@@ -203,31 +158,22 @@ async function loadAndCompileFromEvents(targetDate: string): Promise<CitySignals
       console.error('[loadCitySignals] Events compilation error:', err)
     }
   }
-
-  // Disk fallback for events (development only)
   if (process.env.NODE_ENV === 'development') {
     const events = loadEventsFromDisk(monthKey)
     if (events && events.length > 0) {
       const { pack, ramifications } = compileEventsForDate(events, targetDate)
-      console.log(`[loadCitySignals] Compiled ${pack.events.length} events, ${ramifications.length} ramifications`)
+      console.log(\\\`[loadCitySignals] Compiled \\\${pack.events.length} events, \\\${ramifications.length} ramifications\\\`)
       return mergePackWithRamifications(pack, ramifications) as CitySignalsPackV1
     }
   }
-
   return null
 }
 
-/**
- * Load events from local disk
- */
 function loadEventsFromDisk(monthKey: string): BanlieueEvent[] | null {
-  // Ensure events directory exists
   if (!fs.existsSync(EVENTS_DIR)) {
     fs.mkdirSync(EVENTS_DIR, { recursive: true })
   }
-
-  // Try month-specific file
-  const monthPath = path.join(EVENTS_DIR, `${monthKey}-events.json`)
+  const monthPath = path.join(EVENTS_DIR, \\\`\\\${monthKey}-events.json\\\`)
   if (fs.existsSync(monthPath)) {
     try {
       const raw = fs.readFileSync(monthPath, 'utf-8')
@@ -236,8 +182,6 @@ function loadEventsFromDisk(monthKey: string): BanlieueEvent[] | null {
       // fall through
     }
   }
-
-  // Try generic banlieue file
   const genericPath = path.join(EVENTS_DIR, 'banlieue-events.json')
   if (fs.existsSync(genericPath)) {
     try {
@@ -247,16 +191,11 @@ function loadEventsFromDisk(monthKey: string): BanlieueEvent[] | null {
       // fall through
     }
   }
-
   return null
 }
 
-/**
- * Synchronous disk loader for development fallback.
- */
 function loadFromDisk(targetDate: string): CitySignalsPackV1 | null {
-  // Try new path first
-  const newPath = path.join(DAILY_DIR, `${targetDate}.paris-idf.json`)
+  const newPath = path.join(DAILY_DIR, \\\`\\\${targetDate}.paris-idf.json\\\`)
   if (fs.existsSync(newPath)) {
     try {
       const raw = fs.readFileSync(newPath, 'utf-8')
@@ -265,9 +204,7 @@ function loadFromDisk(targetDate: string): CitySignalsPackV1 | null {
       // fall through
     }
   }
-
-  // Try legacy path
-  const legacyPath = path.join(SIGNALS_DIR, `${targetDate}.json`)
+  const legacyPath = path.join(SIGNALS_DIR, \\\`\\\${targetDate}.json\\\`)
   if (fs.existsSync(legacyPath)) {
     try {
       const raw = fs.readFileSync(legacyPath, 'utf-8')
@@ -276,13 +213,10 @@ function loadFromDisk(targetDate: string): CitySignalsPackV1 | null {
       // fall through
     }
   }
-
-  // Fallback to most recent pack
   return fallbackToLatest()
 }
 
 function fallbackToLatest(): CitySignalsPackV1 | null {
-  // Try daily/ folder first
   if (fs.existsSync(DAILY_DIR)) {
     const files = fs.readdirSync(DAILY_DIR).filter((f) => f.endsWith('.json'))
     if (files.length > 0) {
@@ -296,8 +230,6 @@ function fallbackToLatest(): CitySignalsPackV1 | null {
       }
     }
   }
-
-  // Fallback to root signals dir (legacy)
   if (!fs.existsSync(SIGNALS_DIR)) return null
   const files = fs.readdirSync(SIGNALS_DIR).filter((f) => f.endsWith('.json') && !f.startsWith('.'))
   if (files.length === 0) return null
@@ -310,3 +242,10 @@ function fallbackToLatest(): CitySignalsPackV1 | null {
     return null
   }
 }
+`;
+
+// Replace escaped backticks with actual backticks
+const finalContent = content.replace(/\\\\\\\`/g, '`');
+
+fs.writeFileSync('src/lib/city-signals/loadCitySignals.ts', finalContent);
+console.log('loadCitySignals.ts written successfully');

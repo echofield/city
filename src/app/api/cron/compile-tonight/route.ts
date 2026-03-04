@@ -15,6 +15,7 @@ import { fetchWeatherSignal, createUnknownWeatherSignal } from '@/lib/signal-fet
 import { fetchTransportSignals } from '@/lib/signal-fetchers/transport'
 import { computeRamifications } from '@/lib/signal-fetchers/ramification-engine'
 import type { TonightPack, WeeklyWindow, EventSignal, WeatherSignal, TransportSignal } from '@/lib/signal-fetchers/types'
+import { storageWriteJson, isStorageConfigured } from '@/lib/supabase/storageFetchJson'
 
 /**
  * Get tonight's date (YYYY-MM-DD)
