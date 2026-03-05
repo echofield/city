@@ -1,104 +1,155 @@
 /**
- * FLOW Vocabulary System — v1.0
+ * FLOW Lexicon — v2.0
  *
- * ~25 words max. The whole product speaks the same language of the city.
- * Sound like an experienced Paris driver whispering useful hints.
+ * The 10-word micro-language + ~30 word corpus.
+ * "Un chauffeur parisien expérimenté qui te glisse l'info."
+ *
+ * THE 10-WORD CORE (for instant reading):
+ * ┌─────────────────────────────────────────────────┐
+ * │ Maintenir · Rejoindre · Anticiper · Contourner │
+ * │ Tenter · Calme · Monte · Plein · Sortie · Trafic │
+ * └─────────────────────────────────────────────────┘
  *
  * Principles:
- * - Short
- * - Concrete
- * - Observable
- * - Human
- * - No analytics language
+ * - Very small vocabulary
+ * - Consistent structure
+ * - Observable reality words
+ * - Verbs over nouns
  *
- * AVOID: signal, dispersion, ramification, saturation, friction,
- *        champ, optimisation, prediction
+ * BANNED: signal, ramification, saturation, dispersion, optimisation,
+ *         algorithme, champ, friction, analyse, prediction
  */
 
 // ════════════════════════════════════════════════════════════════
-// 1. CORE ACTION VERBS (the big command)
+// THE 10-WORD MICRO-LANGUAGE
 // ════════════════════════════════════════════════════════════════
 
-export type ActionVerb =
-  | 'maintenir'   // Stay in area
-  | 'rejoindre'   // Move to area
-  | 'anticiper'   // Go early
-  | 'contourner'  // Avoid congestion
-  | 'tenter'      // Opportunistic try
+export const FLOW_CORE = [
+  'Maintenir',   // stay
+  'Rejoindre',   // go there
+  'Anticiper',   // move early
+  'Contourner',  // avoid
+  'Tenter',      // opportunistic try
+  'Calme',       // low activity
+  'Monte',       // building demand
+  'Plein',       // peak
+  'Sortie',      // people exiting
+  'Trafic',      // traffic condition
+] as const
 
-export const ACTION_VERBS: Record<ActionVerb, {
-  label: string
-  meaning: string
-}> = {
-  maintenir: { label: 'MAINTENIR', meaning: 'Rester dans la zone' },
-  rejoindre: { label: 'REJOINDRE', meaning: 'Se diriger vers' },
-  anticiper: { label: 'ANTICIPER', meaning: 'Partir en avance' },
-  contourner: { label: 'CONTOURNER', meaning: 'Éviter la congestion' },
-  tenter: { label: 'TENTER', meaning: 'Coup de poker' },
+// ════════════════════════════════════════════════════════════════
+// 1. ACTIONS (driver commands)
+// ════════════════════════════════════════════════════════════════
+
+export const FLOW_ACTIONS = [
+  'Maintenir',
+  'Rejoindre',
+  'Anticiper',
+  'Contourner',
+  'Tenter',
+] as const
+
+export type ActionVerb = 'maintenir' | 'rejoindre' | 'anticiper' | 'contourner' | 'tenter'
+
+export const ACTION_LABELS: Record<ActionVerb, string> = {
+  maintenir: 'MAINTENIR',
+  rejoindre: 'REJOINDRE',
+  anticiper: 'ANTICIPER',
+  contourner: 'CONTOURNER',
+  tenter: 'TENTER',
 }
 
 // ════════════════════════════════════════════════════════════════
-// 2. CITY MOVEMENT VERBS (what the city is doing)
+// 2. PHASES (the bar: Calme — Monte — Plein — Sortie)
 // ════════════════════════════════════════════════════════════════
 
-export type CityVerb =
-  | 'ca_arrive'   // influx forming
-  | 'ca_monte'    // demand building
-  | 'plein'       // peak density
-  | 'ca_sort'     // people leaving venues
-  | 'ca_bouge'    // active area
-  | 'ca_retombe'  // decline
+export const FLOW_PHASES = [
+  'Calme',
+  'Monte',
+  'Plein',
+  'Sortie',
+] as const
 
-export const CITY_VERBS: Record<CityVerb, string> = {
-  ca_arrive: 'Ça arrive',
-  ca_monte: 'Ça monte',
-  plein: 'Plein',
-  ca_sort: 'Ça sort',
-  ca_bouge: 'Ça bouge',
-  ca_retombe: 'Ça retombe',
-}
-
-// ════════════════════════════════════════════════════════════════
-// 3. AREA RHYTHM PHASES (the phase bar)
-// ════════════════════════════════════════════════════════════════
-
-export type AreaPhase = 'calme' | 'ca_monte' | 'plein' | 'ca_sort'
+export type AreaPhase = 'calme' | 'monte' | 'plein' | 'sortie'
 
 export const PHASE_LABELS: Record<AreaPhase, string> = {
   calme: 'Calme',
-  ca_monte: 'Ça monte',
+  monte: 'Monte',
   plein: 'Plein',
-  ca_sort: 'Ça sort',
+  sortie: 'Sortie',
 }
 
-export const PHASE_ORDER: AreaPhase[] = ['calme', 'ca_monte', 'plein', 'ca_sort']
+export const PHASE_ORDER: AreaPhase[] = ['calme', 'monte', 'plein', 'sortie']
 
 // ════════════════════════════════════════════════════════════════
-// 4. EVENT TRIGGERS (high-trust signals)
+// 3. CITY MOVEMENT (how the area behaves)
 // ════════════════════════════════════════════════════════════════
+
+export const FLOW_CITY = [
+  'Calme',
+  'Monte',
+  'Plein',
+  'Sortie',
+  'Retombe',
+] as const
+
+export type CityState = 'calme' | 'monte' | 'plein' | 'sortie' | 'retombe'
+
+export const CITY_LABELS: Record<CityState, string> = {
+  calme: 'Calme',
+  monte: 'Monte',
+  plein: 'Plein',
+  sortie: 'Sortie',
+  retombe: 'Retombe',
+}
+
+// ════════════════════════════════════════════════════════════════
+// 4. EVENT TRIGGERS (creates trust — real events)
+// ════════════════════════════════════════════════════════════════
+
+export const FLOW_EVENTS = [
+  'Concert',
+  'Théâtre',
+  'Match',
+  'Bars',
+  'Arrivée',
+  'Vols',
+  'Marché',
+  'Festival',
+] as const
 
 export type EventTrigger =
-  | 'sortie'       // people leaving
-  | 'arrivee'      // people arriving
-  | 'match'        // sports event
-  | 'concert'      // music event
-  | 'bars_pleins'  // nightlife peak
-  | 'pluie'        // weather
-  | 'nuit'         // late night
+  | 'concert'
+  | 'theatre'
+  | 'match'
+  | 'bars'
+  | 'arrivee'
+  | 'vols'
+  | 'marche'
+  | 'festival'
 
 export const EVENT_LABELS: Record<EventTrigger, string> = {
-  sortie: 'Sortie',
-  arrivee: 'Arrivée',
-  match: 'Match',
   concert: 'Concert',
-  bars_pleins: 'Bars pleins',
-  pluie: 'Pluie',
-  nuit: 'Nuit',
+  theatre: 'Théâtre',
+  match: 'Match',
+  bars: 'Bars',
+  arrivee: 'Arrivée',
+  vols: 'Vols',
+  marche: 'Marché',
+  festival: 'Festival',
 }
 
 // ════════════════════════════════════════════════════════════════
-// 5. TIME HINTS (approximate, human)
+// 5. TIME INDICATORS (approximate, human)
 // ════════════════════════════════════════════════════════════════
+
+export const FLOW_TIME = [
+  'Maintenant',
+  'Dans ~5 min',
+  'Encore ~10 min',
+  'Bientôt',
+  'Fini',
+] as const
 
 export function formatTimeHint(minutes: number | null): string {
   if (minutes === null) return ''
@@ -121,38 +172,29 @@ export function formatWindowRemaining(minutes: number | null): string {
 }
 
 // ════════════════════════════════════════════════════════════════
-// 6. TRAFFIC LANGUAGE (not friction)
+// 6. TRAFFIC (not "friction")
 // ════════════════════════════════════════════════════════════════
 
-export type TrafficState = 'fluide' | 'dense' | 'bloque'
+export const FLOW_TRAFFIC = [
+  'Trafic fluide',
+  'Trafic dense',
+  'Bloqué',
+  'Pluie',
+  'Travaux',
+] as const
+
+export type TrafficState = 'fluide' | 'dense' | 'bloque' | 'pluie' | 'travaux'
 
 export const TRAFFIC_LABELS: Record<TrafficState, string> = {
   fluide: 'Trafic fluide',
   dense: 'Trafic dense',
-  bloque: 'Zone bloquée',
-}
-
-// Weather impact
-export function formatWeatherImpact(type: string, impact: string): string {
-  if (type === 'rain') return `Pluie ${impact}`
-  if (type === 'cold') return `Froid ${impact}`
-  return impact
+  bloque: 'Bloqué',
+  pluie: 'Pluie',
+  travaux: 'Travaux',
 }
 
 // ════════════════════════════════════════════════════════════════
-// 7. OPPORTUNITY HINTS (subtle, not gamified)
-// ════════════════════════════════════════════════════════════════
-
-export const OPPORTUNITY_HINTS = {
-  active: 'Ça bouge',
-  good_window: 'Bonne fenêtre',
-  interesting: 'Moment intéressant',
-  forming: 'Ça arrive',
-  peak: 'Plein',
-} as const
-
-// ════════════════════════════════════════════════════════════════
-// 8. CORRIDOR LABELS (readable)
+// 7. CORRIDORS
 // ════════════════════════════════════════════════════════════════
 
 export const CORRIDOR_LABELS = {
@@ -164,33 +206,25 @@ export const CORRIDOR_LABELS = {
 } as const
 
 // ════════════════════════════════════════════════════════════════
-// 9. COMPLETE PHRASE BUILDERS
+// 8. PHRASE BUILDERS
 // ════════════════════════════════════════════════════════════════
 
 /**
- * Build an event phrase: "Sortie concert La Cigale"
+ * "Sortie concert La Cigale"
  */
-export function buildEventPhrase(
-  trigger: EventTrigger,
-  venue?: string,
-  type?: string
-): string {
-  const base = EVENT_LABELS[trigger]
-  if (venue && type) return `${base} ${type} ${venue}`
-  if (venue) return `${base} ${venue}`
-  if (type) return `${base} ${type}`
-  return base
+export function buildEventPhrase(type: string, venue?: string): string {
+  return venue ? `Sortie ${type} ${venue}` : `Sortie ${type}`
 }
 
 /**
- * Build a zone state phrase: "Bastille — Ça monte"
+ * "Arrivée TGV Gare du Nord"
  */
-export function buildZoneState(zone: string, verb: CityVerb): string {
-  return `${zone} — ${CITY_VERBS[verb]}`
+export function buildArrivalPhrase(type: string, location?: string): string {
+  return location ? `Arrivée ${type} ${location}` : `Arrivée ${type}`
 }
 
 /**
- * Build a traffic phrase: "Trafic dense périph"
+ * "Trafic dense périph"
  */
 export function buildTrafficPhrase(state: TrafficState, detail?: string): string {
   const base = TRAFFIC_LABELS[state]
@@ -198,27 +232,41 @@ export function buildTrafficPhrase(state: TrafficState, detail?: string): string
 }
 
 // ════════════════════════════════════════════════════════════════
-// 10. VOCABULARY SUMMARY (for reference)
+// THE COMPLETE FLOW CORPUS (~30 words)
 // ════════════════════════════════════════════════════════════════
 
+export const FLOW_CORPUS = {
+  actions: FLOW_ACTIONS,
+  phases: FLOW_PHASES,
+  city: FLOW_CITY,
+  events: FLOW_EVENTS,
+  time: FLOW_TIME,
+  traffic: FLOW_TRAFFIC,
+} as const
+
 /**
- * The ~25 word vocabulary:
+ * VOCABULARY SUMMARY:
  *
- * ACTIONS (5):
- * - Maintenir, Rejoindre, Anticiper, Contourner, Tenter
+ * ACTIONS (5):  Maintenir · Rejoindre · Anticiper · Contourner · Tenter
+ * PHASES (4):   Calme · Monte · Plein · Sortie
+ * CITY (5):     Calme · Monte · Plein · Sortie · Retombe
+ * EVENTS (8):   Concert · Théâtre · Match · Bars · Arrivée · Vols · Marché · Festival
+ * TIME (5):     Maintenant · Dans ~X min · Encore ~X min · Bientôt · Fini
+ * TRAFFIC (5):  Trafic fluide · Trafic dense · Bloqué · Pluie · Travaux
  *
- * CITY VERBS (6):
- * - Ça arrive, Ça monte, Plein, Ça sort, Ça bouge, Ça retombe
+ * TOTAL: ~30 words
  *
- * EVENTS (7):
- * - Sortie, Arrivée, Match, Concert, Bars pleins, Pluie, Nuit
+ * Example screen:
+ * ┌────────────────────────────┐
+ * │ REJOINDRE                  │
+ * │ Montmartre                 │
+ * │                            │
+ * │ Sortie concert La Cigale   │
+ * │ Dans ~6 min                │
+ * │                            │
+ * │ Trafic fluide              │
+ * └────────────────────────────┘
  *
- * PHASES (4):
- * - Calme, Ça monte, Plein, Ça sort
- *
- * TIME (4):
- * - Dans ~X min, Maintenant, Encore ~X min, Fini
- *
- * TRAFFIC (3):
- * - Fluide, Dense, Bloqué
+ * Phase bar:
+ * Calme — Monte — Plein — Sortie
  */
