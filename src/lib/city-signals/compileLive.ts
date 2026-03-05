@@ -9,6 +9,8 @@
  * requests don't need to recompile.
  */
 
+import * as fs from 'fs'
+import * as path from 'path'
 import { fetchEventSignals, createUnknownEventPlaceholder } from '@/lib/signal-fetchers/events'
 import { fetchWeatherSignal, createUnknownWeatherSignal } from '@/lib/signal-fetchers/weather'
 import { fetchTransportSignals } from '@/lib/signal-fetchers/transport'
@@ -18,11 +20,30 @@ import { storageWriteJson, isStorageConfigured } from '@/lib/supabase/storageFet
 import type { TonightPack, WeeklyWindow, EventSignal, WeatherSignal, TransportSignal } from '@/lib/signal-fetchers/types'
 import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
 
-/** Inline fallback skeleton (same as cron route) */
+/** Load skeleton patterns from file */
+function loadSkeletonPatterns(): WeeklyWindow[] {
+  try {
+    const skeletonPath = path.join(process.cwd(), 'data', 'city-signals', 'weekly', 'skeleton.json')
+    if (fs.existsSync(skeletonPath)) {
+      const raw = fs.readFileSync(skeletonPath, 'utf-8')
+      const data = JSON.parse(raw)
+      return data.patterns || []
+    }
+  } catch (err) {
+    console.warn('[compileLive] Could not load skeleton.json:', err)
+  }
+  // Fallback if file not found
+  return FALLBACK_SKELETON
+}
+
+/** Inline fallback skeleton if file not available */
 const FALLBACK_SKELETON: WeeklyWindow[] = [
   { id: 'fb-nord', name: 'Gare du Nord', dayOfWeek: [0, 1, 2, 3, 4, 5, 6], window: { start: '21:00', end: '00:30' }, zones: ['Gare du Nord', "Gare de l'Est"], corridors: ['nord'], confidence: 0.7, intensity: 4, description: 'Arrivées TGV/Thalys — sortie voyageurs' },
   { id: 'fb-bastille', name: 'Bastille / bars', dayOfWeek: [4, 5, 6], window: { start: '22:00', end: '02:00' }, zones: ['Bastille', 'République'], corridors: ['est'], confidence: 0.75, intensity: 3, description: 'Bars IX/XI — sorties nocturnes' },
   { id: 'fb-chatelet', name: 'Châtelet / Marais', dayOfWeek: [4, 5, 6], window: { start: '22:30', end: '01:30' }, zones: ['Châtelet', 'Marais'], corridors: ['est'], confidence: 0.7, intensity: 3, description: 'Marais — dernier métro' },
+  { id: 'fb-opera', name: 'Opéra / Grands Boulevards', dayOfWeek: [1, 2, 3, 4, 5, 6], window: { start: '20:00', end: '00:00' }, zones: ['Opéra', 'Saint-Lazare'], corridors: ['ouest'], confidence: 0.75, intensity: 3, description: 'Sorties bureaux et restaurants — gare Saint-Lazare, Opéra' },
+  { id: 'fb-cdg', name: 'CDG — vols tardifs', dayOfWeek: [0, 1, 2, 3, 4, 5, 6], window: { start: '22:00', end: '02:00' }, zones: ['Gare du Nord', 'Châtelet'], corridors: ['nord'], confidence: 0.7, intensity: 3, description: 'Navette CDG / Roissy — dépose centre, retour nord' },
+  { id: 'fb-gdl', name: 'Gare de Lyon — flux soir', dayOfWeek: [0, 1, 2, 3, 4, 5, 6], window: { start: '19:30', end: '23:00' }, zones: ['Gare de Lyon', 'Bercy'], corridors: ['est'], confidence: 0.8, intensity: 3, description: 'Arrivées TGV sud-est — flux sortie gare, Bercy' },
 ]
 
 function getTonightDate(): string {
@@ -59,15 +80,18 @@ export async function compileLiveTonightPack(): Promise<CitySignalsPackV1 | null
       }),
     ])
 
-    // Use fallback skeleton filtered to today's day-of-week
+    // Load skeleton patterns (from file or fallback)
+    const allPatterns = loadSkeletonPatterns()
     const dayOfWeek = new Date(date).getDay()
-    const skeleton = FALLBACK_SKELETON.filter((s) => {
+    const skeleton = allPatterns.filter((s) => {
       const days = Array.isArray(s.dayOfWeek) ? s.dayOfWeek : [s.dayOfWeek]
       return days.includes(dayOfWeek)
     })
 
+    console.log(`[compileLive] Skeleton: ${allPatterns.length} patterns total, ${skeleton.length} active today (day ${dayOfWeek})`)
+
     // Compute ramifications
-    const ramifications = computeRamifications(events, weather, transport, FALLBACK_SKELETON, date)
+    const ramifications = computeRamifications(events, weather, transport, allPatterns, date)
 
     // Build TonightPack
     const compiledAt = new Date().toISOString()
