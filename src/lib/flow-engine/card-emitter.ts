@@ -18,9 +18,15 @@ import type {
   Corridor,
   CardRevisionReason,
   DriverProfileTonight,
+  Momentum,
+  WindowPressure,
 } from '@/types/flow-card'
 import {
   computeOpportunityState,
+  computeWindowPressure,
+  computeMinutesRemaining,
+  computeWindowProgress,
+  inferMomentum,
   filterExpiredOpportunities,
   computeCardHash,
   detectRevisionReason,
@@ -266,6 +272,13 @@ function ramificationsToOpportunities(
       const evidenceSources = ram.sourceSignals?.map(s => s.source) ?? []
       const kind = inferKind(cause, confidence, evidenceSources)
 
+      // Compute all state-related fields
+      const state = computeOpportunityState({ quand: window }, now)
+      const windowProgress = computeWindowProgress({ quand: window }, now)
+      const minutesRemaining = computeMinutesRemaining({ quand: window }, now)
+      const windowPressure = computeWindowPressure({ quand: window }, now)
+      const momentum = inferMomentum(state, confidence, windowProgress)
+
       return {
         id: ram.id,
         ou: primaryZone,
@@ -274,7 +287,11 @@ function ramificationsToOpportunities(
         cause,
         kind,
         corridor: ram.corridor as Corridor | null ?? inferCorridor(ram.explanation, zones),
-        state: computeOpportunityState({ quand: window }, now),
+        state,
+        momentum,
+        windowPressure,
+        minutesRemaining,
+        windowProgress,
         confidence,
         ttlMinutes,
         expiresAt: expiresAt.toISOString(),
@@ -291,8 +308,9 @@ function rankOpportunities(
 ): Opportunity[] {
   const stateOrder: Record<OpportunityState, number> = {
     active: 0,
-    forming: 1,
-    horizon: 2,
+    closing: 1,   // Closing is urgent but fading — still actionable
+    forming: 2,
+    horizon: 3,
   }
 
   return [...opportunities].sort((a, b) => {

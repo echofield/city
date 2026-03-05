@@ -6,6 +6,8 @@ import { Navigation, Radar, X, HelpCircle } from 'lucide-react'
 import type { ActionType } from '@/lib/flow-engine/driver-anchor'
 import type { ShiftPhase, CorridorStatus } from '@/types/flow-view-model'
 import type { SignalCertainty, PisteCategory } from '@/lib/flow-vocabulary'
+import type { Opportunity, OpportunityState, Momentum, WindowPressure } from '@/types/flow-card'
+import { getPressureLabel } from '@/types/flow-card'
 
 // ════════════════════════════════════════════════════════════════
 // META TECHNIQUE CONSTANTS
@@ -133,6 +135,9 @@ export interface FlowDashboardProps {
   // PICS CE SOIR — tonight's peaks timeline
   tonightPeaks?: TonightPeak[]
 
+  // AUTRES PISTES — alternative opportunities from card
+  opportunities?: Opportunity[]
+
   // CONFIRME flow — session state locking
   isConfirmed?: boolean
   onConfirm?: () => void
@@ -209,6 +214,36 @@ const RIDE_PROFILE_LABELS: Record<RideProfile, string> = {
   longues: 'L',
   mixte: 'M',
   courtes: 'C',
+}
+
+// Opportunity state symbols — ● maintenant ⚠ closing ○ ça monte · horizon
+const STATE_SYMBOLS: Record<OpportunityState, string> = {
+  active: '●',
+  closing: '⚠',
+  forming: '○',
+  horizon: '·',
+}
+
+// Momentum arrows — ▲ building → stable ▼ fading
+const MOMENTUM_ARROWS: Record<Momentum, string> = {
+  building: '▲',
+  stable: '→',
+  fading: '▼',
+}
+
+// State colors for UI
+const STATE_COLORS: Record<OpportunityState, string> = {
+  active: 'text-signal',
+  closing: 'text-intent',
+  forming: 'text-amber-400',
+  horizon: 'text-text-ghost',
+}
+
+// Momentum colors
+const MOMENTUM_COLORS: Record<Momentum, string> = {
+  building: 'text-signal',
+  stable: 'text-text-ghost',
+  fading: 'text-intent',
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -324,6 +359,7 @@ interface ReadModeProps extends FlowDashboardProps {
   breathPhase: number
   onNavigate: () => void
   onOpenRadar: () => void
+  opportunities?: Opportunity[]
 }
 
 function ReadMode({
@@ -341,6 +377,7 @@ function ReadMode({
   eurEstimate,
   confidenceLabel,
   rideProfile,
+  opportunities,
   isConfirmed,
   onConfirm,
   onUnconfirm,
@@ -477,6 +514,30 @@ function ReadMode({
         >
           {cause}
         </motion.p>
+
+        {/* AUTRES PISTES — alternative opportunities */}
+        {opportunities && opportunities.length > 1 && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={STAGGER_2}
+            className="mt-8 w-full max-w-md"
+          >
+            <p className="text-xs text-text-ghost uppercase tracking-wider mb-3 text-center">
+              AUTRES PISTES
+            </p>
+            <div className="space-y-2">
+              {opportunities.slice(1, 5).map((opp, index) => (
+                <OpportunityRow
+                  key={opp.id}
+                  opportunity={opp}
+                  index={index}
+                  breathPhase={breathPhase}
+                />
+              ))}
+            </div>
+          </motion.div>
+        )}
 
         {/* CONFIRME button */}
         {onConfirm && (
@@ -1095,5 +1156,96 @@ function ShiftArcMini({ currentPhase, breathPhase }: { currentPhase?: ShiftPhase
         )
       })}
     </div>
+  )
+}
+
+/**
+ * OpportunityRow — Single opportunity line in AUTRES PISTES
+ *
+ * ● Bastille      ▲  ~18 min restant  [=====>    ]
+ * ○ Pigalle       →  ouvre ~12 min
+ * · Gare du Nord  ▼  ouvre ~45 min
+ */
+function OpportunityRow({
+  opportunity,
+  index,
+  breathPhase,
+}: {
+  opportunity: Opportunity
+  index: number
+  breathPhase: number
+}) {
+  const { state, momentum, minutesRemaining, windowProgress, ou, kind } = opportunity
+  const stateSymbol = STATE_SYMBOLS[state]
+  const momentumArrow = MOMENTUM_ARROWS[momentum]
+  const stateColor = STATE_COLORS[state]
+  const momentumColor = MOMENTUM_COLORS[momentum]
+  const pressureLabel = getPressureLabel(state, minutesRemaining)
+
+  // Active dots pulse
+  const isActive = state === 'active'
+  const isClosing = state === 'closing'
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -4 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ ...STAGGER_1, delay: 0.04 * index }}
+      className="flex items-center gap-3 px-4 py-2 rounded-lg bg-surface/50"
+    >
+      {/* State symbol with pulse animation for active */}
+      <motion.span
+        className={`text-lg ${stateColor}`}
+        animate={isActive ? {
+          opacity: [0.6, 1, 0.6],
+          scale: [1, 1.1, 1],
+        } : isClosing ? {
+          opacity: [0.7, 1, 0.7],
+        } : {}}
+        transition={{ duration: 2, repeat: Infinity }}
+        style={isActive ? { opacity: 0.6 + breathPhase * 0.4 } : undefined}
+      >
+        {stateSymbol}
+      </motion.span>
+
+      {/* Zone name */}
+      <span className={`text-sm flex-1 ${
+        state === 'active' ? 'text-text-primary' :
+        state === 'closing' ? 'text-text-secondary' :
+        'text-text-ghost'
+      }`}>
+        {ou}
+        {/* Piste indicator */}
+        {kind === 'piste' && (
+          <span className="ml-2 text-[10px] text-amber-400/70 border border-amber-400/30 rounded px-1">
+            à tenter
+          </span>
+        )}
+      </span>
+
+      {/* Momentum arrow */}
+      <span className={`text-xs ${momentumColor}`}>
+        {momentumArrow}
+      </span>
+
+      {/* Pressure label */}
+      <span className="text-xs text-text-ghost w-28 text-right">
+        {pressureLabel}
+      </span>
+
+      {/* Progress bar for active/closing windows */}
+      {(state === 'active' || state === 'closing') && (
+        <div className="w-16 h-1.5 bg-border-subtle rounded-full overflow-hidden">
+          <motion.div
+            className={`h-full rounded-full ${
+              state === 'closing' ? 'bg-intent' : 'bg-signal'
+            }`}
+            initial={{ width: 0 }}
+            animate={{ width: `${Math.min(100, windowProgress * 100)}%` }}
+            transition={{ duration: 0.5 }}
+          />
+        </div>
+      )}
+    </motion.div>
   )
 }

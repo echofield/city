@@ -10,11 +10,25 @@
 
 // ── Opportunity (one line on the card) ──
 
-export type OpportunityState = 'active' | 'forming' | 'horizon'
-// active  = ● maintenant (now within window)
+export type OpportunityState = 'active' | 'forming' | 'horizon' | 'closing'
+// active  = ● maintenant (now within window, >10 min remaining)
+// closing = ⚠ dernières minutes (within window, <10 min remaining)
 // forming = ○ ça monte   (window starts within 30 min)
 // horizon = · plus tard   (>30 min away)
 // expired entries are never shown — they are dropped before card emission
+
+/**
+ * Momentum: is the wave building, stable, or fading?
+ * ▲ building — confidence or activity increasing
+ * → stable — steady state
+ * ▼ fading — confidence or activity decreasing
+ */
+export type Momentum = 'building' | 'stable' | 'fading'
+
+/**
+ * Window pressure: urgency indicator for driver action
+ */
+export type WindowPressure = 'opening' | 'active' | 'closing'
 
 export type CauseType =
   | 'bars'        // bars/clubs closing → sortie
@@ -50,6 +64,10 @@ export interface Opportunity {
   kind: OpportunityKind       // confirme = deterministic, piste = pattern bet
   corridor: Corridor | null   // flow direction
   state: OpportunityState     // computed at card emission time
+  momentum: Momentum          // ▲ building / → stable / ▼ fading
+  windowPressure: WindowPressure // opening / active / closing
+  minutesRemaining: number    // computed: minutes until window ends (or starts if forming)
+  windowProgress: number      // 0-1: how far through the window (for progress bar)
   confidence: number          // 0-1
   ttlMinutes: number          // after window.end, how long before silent drop
   expiresAt: string           // ISO — computed: window.end + ttlMinutes
@@ -169,7 +187,7 @@ export function cardToWhatsApp(card: FlowCard): string {
 // ── Ultra-compressed (HUD / watch) ──
 
 export function cardToHUD(card: FlowCard): string {
-  const stateChar = { active: '●', forming: '○', horizon: '·' }
+  const stateChar: Record<OpportunityState, string> = { active: '●', closing: '⚠', forming: '○', horizon: '·' }
   return card.opportunities
     .slice(0, 4)
     .map(o => {
@@ -227,11 +245,127 @@ export function computeOpportunityState(
   const start = new Date(o.quand.start)
   const end = new Date(o.quand.end)
   const msToStart = start.getTime() - now.getTime()
+  const msToEnd = end.getTime() - now.getTime()
   const minToStart = msToStart / 60000
+  const minToEnd = msToEnd / 60000
 
-  if (now >= start && now <= end) return 'active'
+  // Within window
+  if (now >= start && now <= end) {
+    // Closing: less than 10 min remaining
+    if (minToEnd <= 10) return 'closing'
+    return 'active'
+  }
+
+  // Before window
   if (minToStart <= 30 && minToStart > 0) return 'forming'
   return 'horizon'
+}
+
+// ── Window pressure computation ──
+
+export function computeWindowPressure(
+  o: Pick<Opportunity, 'quand'>,
+  now: Date = new Date()
+): WindowPressure {
+  const start = new Date(o.quand.start)
+  const end = new Date(o.quand.end)
+  const msToEnd = end.getTime() - now.getTime()
+  const minToEnd = msToEnd / 60000
+
+  if (now < start) return 'opening'
+  if (minToEnd <= 10) return 'closing'
+  return 'active'
+}
+
+// ── Minutes remaining computation ──
+
+export function computeMinutesRemaining(
+  o: Pick<Opportunity, 'quand'>,
+  now: Date = new Date()
+): number {
+  const start = new Date(o.quand.start)
+  const end = new Date(o.quand.end)
+
+  // If window hasn't started, return minutes until start
+  if (now < start) {
+    return Math.round((start.getTime() - now.getTime()) / 60000)
+  }
+
+  // If within window, return minutes until end
+  if (now <= end) {
+    return Math.round((end.getTime() - now.getTime()) / 60000)
+  }
+
+  // Past window
+  return 0
+}
+
+// ── Window progress computation ──
+
+export function computeWindowProgress(
+  o: Pick<Opportunity, 'quand'>,
+  now: Date = new Date()
+): number {
+  const start = new Date(o.quand.start)
+  const end = new Date(o.quand.end)
+  const totalDuration = end.getTime() - start.getTime()
+
+  if (totalDuration <= 0) return 1 // Invalid window
+
+  if (now < start) return 0 // Not started
+  if (now > end) return 1 // Finished
+
+  const elapsed = now.getTime() - start.getTime()
+  return Math.min(1, Math.max(0, elapsed / totalDuration))
+}
+
+// ── Momentum inference ──
+
+export function inferMomentum(
+  state: OpportunityState,
+  confidence: number,
+  windowProgress: number
+): Momentum {
+  // Closing windows are always fading
+  if (state === 'closing') return 'fading'
+
+  // Forming windows are building
+  if (state === 'forming') return 'building'
+
+  // Active windows: early = building, mid = stable, late = fading
+  if (state === 'active') {
+    if (windowProgress < 0.3) return 'building'
+    if (windowProgress > 0.7) return 'fading'
+    return 'stable'
+  }
+
+  // Horizon: depends on confidence
+  if (confidence >= 0.7) return 'building'
+  return 'stable'
+}
+
+// ── Pressure label for UI ──
+
+export function getPressureLabel(
+  state: OpportunityState,
+  minutesRemaining: number
+): string {
+  if (state === 'forming' || state === 'horizon') {
+    if (minutesRemaining < 60) return `ouvre ~${minutesRemaining} min`
+    const hours = Math.floor(minutesRemaining / 60)
+    return `ouvre ~${hours}h`
+  }
+
+  if (state === 'closing') {
+    return `ferme ~${minutesRemaining} min`
+  }
+
+  // Active
+  if (minutesRemaining < 60) return `~${minutesRemaining} min restant`
+  const hours = Math.floor(minutesRemaining / 60)
+  const mins = minutesRemaining % 60
+  if (mins > 0) return `~${hours}h${mins.toString().padStart(2, '0')} restant`
+  return `~${hours}h restant`
 }
 
 // ── Revision detection ──
