@@ -1,17 +1,17 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
 
 export async function updateSession(request: NextRequest) {
-  // Fail loudly in production if Supabase is not configured
+  // If Supabase is not configured (e.g. Edge env vars not set), bypass auth so the app doesn't 500
   if (!supabaseUrl || !supabaseAnonKey) {
     if (process.env.NODE_ENV === 'production') {
-      throw new Error('Missing Supabase configuration. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY')
+      console.warn('[Supabase Middleware] Missing config - auth bypass (set NEXT_PUBLIC_SUPABASE_* or SUPABASE_* for auth)')
+    } else {
+      console.warn('[Supabase Middleware] Missing configuration - auth bypass enabled')
     }
-    // In dev, allow through without auth
-    console.warn('[Supabase Middleware] Missing configuration - auth bypass enabled')
     return NextResponse.next({ request })
   }
 
