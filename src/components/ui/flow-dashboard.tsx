@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Navigation, Radar, X, HelpCircle } from 'lucide-react'
 import type { ActionType } from '@/lib/flow-engine/driver-anchor'
 import type { ShiftPhase, CorridorStatus } from '@/types/flow-view-model'
+import type { SignalCertainty, PisteCategory } from '@/lib/flow-vocabulary'
 
 // ════════════════════════════════════════════════════════════════
 // TYPES
@@ -28,6 +29,30 @@ export interface ProchainInfo {
   time: string
   zone: string
   type: string
+}
+
+/**
+ * Signal with certainty — distinguishes confirmed from speculative
+ *
+ * CONFIRMÉ: Predictable movement (e.g., "Sortie théâtre Châtelet")
+ * PISTE: Positioning bet (e.g., "Club Pantin ferme ~04:00")
+ */
+export interface FlowSignal {
+  label: string
+  type: 'amber' | 'green' | 'grey'
+  certainty?: SignalCertainty // 'confirme' | 'piste'
+  pisteCategory?: PisteCategory // 'nuit' | 'jour' | 'soiree'
+}
+
+/**
+ * Quest chain — next lead in the night
+ * "Surfing the city rhythm"
+ */
+export interface ProchainePiste {
+  zone: string
+  time: string // "~04:00"
+  cause: string
+  category: PisteCategory
 }
 
 export interface FlowDashboardProps {
@@ -68,8 +93,11 @@ export interface FlowDashboardProps {
   // Corridor statuses
   corridorStatuses?: CorridorStatus[]
 
-  // Signal list
-  signals?: Array<{ label: string; type: 'amber' | 'green' | 'grey' }>
+  // Signal list (with certainty: confirme vs piste)
+  signals?: FlowSignal[]
+
+  // Next lead in the quest chain
+  prochainePiste?: ProchainePiste
 
   // Callbacks
   onNavigate?: () => void
@@ -121,13 +149,20 @@ const ACTION_LABELS: Record<ActionType, string> = {
   tenter: 'TENTER',
 }
 
-// Phase labels — feels alive, not analytical
+// Phase labels — FLOW vocabulary v3.0
 const PHASE_LABELS: Record<ShiftPhase, string> = {
   calme: 'Calme',
-  montee: 'Ça monte',
+  montee: 'Monte',
   pic: 'Plein',
-  dispersion: 'Ça sort',
+  dispersion: 'Sortie',
   nuit_profonde: 'Nuit',
+}
+
+// Piste category labels — speculative leads
+const PISTE_LABELS: Record<PisteCategory, string> = {
+  nuit: 'Piste nuit',
+  jour: 'Piste',
+  soiree: 'Piste soirée',
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -411,6 +446,7 @@ function RadarMode({
   friction,
   eurEstimate,
   signals,
+  prochainePiste,
   currentPhase,
   corridor,
   confidence,
@@ -593,25 +629,55 @@ function RadarMode({
           </div>
         )}
 
-        {/* Signals list */}
+        {/* Prochaine piste — quest chain */}
+        {prochainePiste && (
+          <div className="px-6 py-4 border-b border-border-subtle bg-amber-400/5">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[10px] text-amber-400/70 uppercase tracking-wider border border-amber-400/30 rounded px-1">
+                {PISTE_LABELS[prochainePiste.category]}
+              </span>
+              <span className="text-xs text-text-ghost">Prochaine piste</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-lg text-amber-400">{prochainePiste.zone}</p>
+                <p className="text-xs text-text-ghost">{prochainePiste.cause}</p>
+              </div>
+              <span className="text-sm text-amber-400/70 font-mono">{prochainePiste.time}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Signals list — confirmed vs piste */}
         {signals && signals.length > 0 && (
           <div className="px-6 py-4 border-b border-border-subtle space-y-2">
-            {signals.map((sig, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <span className={`w-1.5 h-1.5 rounded-full ${
-                  sig.type === 'green' ? 'bg-signal' :
-                  sig.type === 'amber' ? 'bg-intent' :
-                  'bg-text-ghost'
-                }`} />
-                <span className={`text-sm ${
-                  sig.type === 'green' ? 'text-signal' :
-                  sig.type === 'amber' ? 'text-intent' :
-                  'text-text-ghost'
-                }`}>
-                  {sig.label}
-                </span>
-              </div>
-            ))}
+            {signals.map((sig, i) => {
+              const isPiste = sig.certainty === 'piste'
+              return (
+                <div key={i} className={`flex items-center gap-2 ${isPiste ? 'opacity-75' : ''}`}>
+                  {/* Piste indicator */}
+                  {isPiste && sig.pisteCategory && (
+                    <span className="text-[10px] text-amber-400/70 uppercase tracking-wider border border-amber-400/30 rounded px-1">
+                      {PISTE_LABELS[sig.pisteCategory]}
+                    </span>
+                  )}
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    isPiste ? 'bg-amber-400/50 border border-dashed border-amber-400' :
+                    sig.type === 'green' ? 'bg-signal' :
+                    sig.type === 'amber' ? 'bg-intent' :
+                    'bg-text-ghost'
+                  }`} />
+                  <span className={`text-sm ${
+                    isPiste ? 'text-amber-400/70 italic' :
+                    sig.type === 'green' ? 'text-signal' :
+                    sig.type === 'amber' ? 'text-intent' :
+                    'text-text-ghost'
+                  }`}>
+                    {sig.label}
+                  </span>
+                </div>
+              )
+            })}
           </div>
         )}
 

@@ -38,9 +38,9 @@ export interface DispatchPanelProps {
 // FLOW vocabulary — feels alive, not analytical
 const PHASE_LABELS: Record<ShiftPhase, string> = {
   calme: 'Calme',
-  montee: 'Ça monte',
+  montee: 'Monte',
   pic: 'Plein',
-  dispersion: 'Ça sort',
+  dispersion: 'Sortie',
   nuit_profonde: 'Nuit',
 }
 

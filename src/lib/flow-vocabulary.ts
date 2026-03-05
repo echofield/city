@@ -1,7 +1,7 @@
 /**
- * FLOW Lexicon — v2.0
+ * FLOW Lexicon — v3.0
  *
- * The 10-word micro-language + ~30 word corpus.
+ * The 10-word micro-language + ~35 word corpus.
  * "Un chauffeur parisien expérimenté qui te glisse l'info."
  *
  * THE 10-WORD CORE (for instant reading):
@@ -10,11 +10,18 @@
  * │ Tenter · Calme · Monte · Plein · Sortie · Trafic │
  * └─────────────────────────────────────────────────┘
  *
+ * NEW IN v3.0 — UNCERTAINTY LAYER:
+ * ┌─────────────────────────────────────────────────┐
+ * │ Confirmé (certain) vs Piste (positioning bet)  │
+ * │ "Navigation system for uncertainty"            │
+ * └─────────────────────────────────────────────────┘
+ *
  * Principles:
  * - Very small vocabulary
  * - Consistent structure
  * - Observable reality words
  * - Verbs over nouns
+ * - Honest about uncertainty (piste vs confirmé)
  *
  * BANNED: signal, ramification, saturation, dispersion, optimisation,
  *         algorithme, champ, friction, analyse, prediction
@@ -206,7 +213,62 @@ export const CORRIDOR_LABELS = {
 } as const
 
 // ════════════════════════════════════════════════════════════════
-// 8. PHRASE BUILDERS
+// 8. SIGNAL CERTAINTY (confirmed vs speculative)
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * Two types of signals:
+ *
+ * CONFIRMÉ — Predictable movement
+ *   "Sortie théâtre Châtelet" — we know people will exit
+ *
+ * PISTE — Positioning bet
+ *   "Piste nuit · Club Pantin ferme ~04:00"
+ *   Something is likely to happen, but outcome uncertain
+ *
+ * Drivers are gamblers. They like honest uncertainty.
+ * This builds trust.
+ */
+
+export type SignalCertainty = 'confirme' | 'piste'
+
+export const CERTAINTY_LABELS: Record<SignalCertainty, string> = {
+  confirme: 'Confirmé',
+  piste: 'Piste',
+}
+
+/**
+ * Piste categories — context for the lead
+ */
+export type PisteCategory = 'nuit' | 'jour' | 'soiree'
+
+export const PISTE_LABELS: Record<PisteCategory, string> = {
+  nuit: 'Piste nuit',
+  jour: 'Piste',
+  soiree: 'Piste soirée',
+}
+
+/**
+ * Quest chain — the night as a sequence of opportunities
+ *
+ * Example driver night:
+ * 02:30 — Bars Bastille pleins
+ * 03:15 — Sortie concert
+ * 04:00 — Piste club Pantin
+ * 04:40 — Arrivées Orly
+ *
+ * The driver is surfing the city rhythm.
+ */
+export interface Piste {
+  zone: string
+  cause: string
+  time: string // "~04:00"
+  category: PisteCategory
+  certainty: SignalCertainty
+}
+
+// ════════════════════════════════════════════════════════════════
+// 9. PHRASE BUILDERS
 // ════════════════════════════════════════════════════════════════
 
 /**
@@ -231,8 +293,23 @@ export function buildTrafficPhrase(state: TrafficState, detail?: string): string
   return detail ? `${base} ${detail}` : base
 }
 
+/**
+ * "Piste nuit · Club Pantin ferme ~04:00"
+ */
+export function buildPistePhrase(piste: Piste): string {
+  const label = PISTE_LABELS[piste.category]
+  return `${label} · ${piste.cause} ${piste.time}`
+}
+
+/**
+ * "Prochaine piste · Club Pantin ~04:00"
+ */
+export function buildNextPistePhrase(zone: string, time: string): string {
+  return `Prochaine piste · ${zone} ${time}`
+}
+
 // ════════════════════════════════════════════════════════════════
-// THE COMPLETE FLOW CORPUS (~30 words)
+// THE COMPLETE FLOW CORPUS (~35 words)
 // ════════════════════════════════════════════════════════════════
 
 export const FLOW_CORPUS = {
@@ -242,21 +319,25 @@ export const FLOW_CORPUS = {
   events: FLOW_EVENTS,
   time: FLOW_TIME,
   traffic: FLOW_TRAFFIC,
+  certainty: ['Confirmé', 'Piste'] as const,
+  pistes: ['Piste', 'Piste nuit', 'Piste soirée', 'Prochaine piste'] as const,
 } as const
 
 /**
  * VOCABULARY SUMMARY:
  *
- * ACTIONS (5):  Maintenir · Rejoindre · Anticiper · Contourner · Tenter
- * PHASES (4):   Calme · Monte · Plein · Sortie
- * CITY (5):     Calme · Monte · Plein · Sortie · Retombe
- * EVENTS (8):   Concert · Théâtre · Match · Bars · Arrivée · Vols · Marché · Festival
- * TIME (5):     Maintenant · Dans ~X min · Encore ~X min · Bientôt · Fini
- * TRAFFIC (5):  Trafic fluide · Trafic dense · Bloqué · Pluie · Travaux
+ * ACTIONS (5):     Maintenir · Rejoindre · Anticiper · Contourner · Tenter
+ * PHASES (4):      Calme · Monte · Plein · Sortie
+ * CITY (5):        Calme · Monte · Plein · Sortie · Retombe
+ * EVENTS (8):      Concert · Théâtre · Match · Bars · Arrivée · Vols · Marché · Festival
+ * TIME (5):        Maintenant · Dans ~X min · Encore ~X min · Bientôt · Fini
+ * TRAFFIC (5):     Trafic fluide · Trafic dense · Bloqué · Pluie · Travaux
+ * CERTAINTY (2):   Confirmé · Piste
+ * PISTES (4):      Piste · Piste nuit · Piste soirée · Prochaine piste
  *
- * TOTAL: ~30 words
+ * TOTAL: ~35 words
  *
- * Example screen:
+ * Example confirmed screen:
  * ┌────────────────────────────┐
  * │ REJOINDRE                  │
  * │ Montmartre                 │
@@ -265,6 +346,15 @@ export const FLOW_CORPUS = {
  * │ Dans ~6 min                │
  * │                            │
  * │ Trafic fluide              │
+ * └────────────────────────────┘
+ *
+ * Example speculative screen:
+ * ┌────────────────────────────┐
+ * │ TENTER                     │
+ * │ Pantin                     │
+ * │                            │
+ * │ Piste nuit                 │
+ * │ Club ferme ~04:00          │
  * └────────────────────────────┘
  *
  * Phase bar:
