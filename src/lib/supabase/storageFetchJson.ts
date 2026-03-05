@@ -3,8 +3,13 @@
  * Uses service role key - server-side only.
  */
 
-const SUPABASE_URL = process.env.SUPABASE_URL
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
+/** Read env vars dynamically — avoids stale module-level capture on some runtimes */
+function getSupabaseUrl(): string | undefined {
+  return process.env.SUPABASE_URL
+}
+function getServiceRoleKey(): string | undefined {
+  return process.env.SUPABASE_SERVICE_ROLE_KEY
+}
 
 export class StorageFetchError extends Error {
   constructor(
@@ -28,20 +33,21 @@ export async function storageFetchJson<T>(
   bucket: string,
   objectPath: string
 ): Promise<T | null> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('[Storage] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
-    }
+  const supabaseUrl = getSupabaseUrl()
+  const serviceRoleKey = getServiceRoleKey()
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    console.warn('[Storage] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
     return null
   }
 
-  const url = `${SUPABASE_URL}/storage/v1/object/${bucket}/${objectPath}`
+  const url = `${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`
 
   const res = await fetch(url, {
     method: 'GET',
     headers: {
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'apikey': serviceRoleKey,
+      'Authorization': `Bearer ${serviceRoleKey}`,
     },
     cache: 'no-store',
   })
@@ -85,7 +91,7 @@ export async function storageFetchJson<T>(
  * Check if Supabase Storage is configured.
  */
 export function isStorageConfigured(): boolean {
-  return !!(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
+  return !!(getSupabaseUrl() && getServiceRoleKey())
 }
 
 /**
@@ -101,24 +107,49 @@ export async function storageWriteJson<T>(
   objectPath: string,
   data: T
 ): Promise<boolean> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  const supabaseUrl = getSupabaseUrl()
+  const serviceRoleKey = getServiceRoleKey()
+
+  if (!supabaseUrl || !serviceRoleKey) {
     console.warn('[Storage] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY - cannot write')
     return false
   }
 
-  const url = `${SUPABASE_URL}/storage/v1/object/${bucket}/${objectPath}`
+  const url = `${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`
   const body = JSON.stringify(data, null, 2)
 
-  const res = await fetch(url, {
+  let res = await fetch(url, {
     method: 'POST',
     headers: {
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'apikey': serviceRoleKey,
+      'Authorization': `Bearer ${serviceRoleKey}`,
       'Content-Type': 'application/json',
       'x-upsert': 'true',
     },
     body,
   })
+
+  // Auto-create bucket if it doesn't exist (400 or 404 on first write)
+  if (!res.ok && (res.status === 400 || res.status === 404)) {
+    const errBody = await res.text()
+    if (errBody.includes('not found') || errBody.includes('Bucket') || errBody.includes('bucket')) {
+      console.log(`[Storage] Bucket "${bucket}" not found, attempting to create...`)
+      const created = await ensureBucket(supabaseUrl, serviceRoleKey, bucket)
+      if (created) {
+        // Retry write after bucket creation
+        res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'apikey': serviceRoleKey,
+            'Authorization': `Bearer ${serviceRoleKey}`,
+            'Content-Type': 'application/json',
+            'x-upsert': 'true',
+          },
+          body,
+        })
+      }
+    }
+  }
 
   if (!res.ok) {
     const errorBody = await res.text()
@@ -128,4 +159,32 @@ export async function storageWriteJson<T>(
 
   console.log(`[Storage] Written: ${bucket}/${objectPath}`)
   return true
+}
+
+/**
+ * Auto-create a private Supabase Storage bucket.
+ */
+async function ensureBucket(supabaseUrl: string, serviceRoleKey: string, bucket: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${supabaseUrl}/storage/v1/bucket`, {
+      method: 'POST',
+      headers: {
+        'apikey': serviceRoleKey,
+        'Authorization': `Bearer ${serviceRoleKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ id: bucket, name: bucket, public: false }),
+    })
+    if (res.ok || res.status === 409) {
+      // 409 = already exists, that's fine
+      console.log(`[Storage] Bucket "${bucket}" ensured (status ${res.status})`)
+      return true
+    }
+    const body = await res.text()
+    console.error(`[Storage] Bucket creation failed: ${res.status}`, body)
+    return false
+  } catch (err) {
+    console.error('[Storage] Bucket creation error:', err)
+    return false
+  }
 }

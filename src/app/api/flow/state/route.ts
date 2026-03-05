@@ -15,6 +15,7 @@ import { normalizeCitySignalsPack } from '@/lib/city-signals/normalize-pack'
 import { checkRateLimit, getClientIp, RATE_LIMITS } from '@/lib/rate-limit'
 import { flowStateParamsSchema, parseQueryParams } from '@/lib/validation'
 import { cache, CACHE_KEYS, CACHE_TTL } from '@/lib/cache'
+import { compileLiveTonightPack } from '@/lib/city-signals/compileLive'
 import type { FlowState, Ramification, DriverPosition } from '@/types/flow-state'
 import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
 import type { CompiledBrief } from '@/lib/prompts/contracts'
@@ -128,26 +129,40 @@ function getMockFlowState(sessionStart?: number): FlowState {
   }
 }
 
-/** Get city signals with caching */
-async function getCachedCitySignals(): Promise<CitySignalsPackV1 | null> {
+/** Get city signals with caching — falls back to live compilation if no pack stored */
+async function getCachedCitySignals(): Promise<{ pack: CitySignalsPackV1 | null; liveCompiled: boolean }> {
   const today = new Date().toISOString().split('T')[0]
   const cacheKey = CACHE_KEYS.citySignals(today)
 
   // Check cache first
   const cached = cache.get<CitySignalsPackV1>(cacheKey)
   if (cached) {
-    return cached
+    return { pack: cached, liveCompiled: false }
   }
 
-  // Load from source
+  // Load from Supabase storage
   const rawPack = await loadCitySignals()
   if (rawPack) {
     const normalized = normalizeCitySignalsPack(rawPack)
     cache.set(cacheKey, normalized, CACHE_TTL.citySignals)
-    return normalized
+    return { pack: normalized, liveCompiled: false }
   }
 
-  return null
+  // No pack in storage → compile signals live (self-healing)
+  console.log('[flow/state] No pack in storage — compiling live tonight pack...')
+  try {
+    const livePack = await compileLiveTonightPack()
+    if (livePack) {
+      const normalized = normalizeCitySignalsPack(livePack)
+      // Cache for shorter TTL — this is a live compilation, will be replaced by cron
+      cache.set(cacheKey, normalized, Math.min(CACHE_TTL.citySignals, 300))
+      return { pack: normalized, liveCompiled: true }
+    }
+  } catch (err) {
+    console.error('[flow/state] Live compilation failed:', err)
+  }
+
+  return { pack: null, liveCompiled: false }
 }
 
 export async function GET(request: Request) {
@@ -199,8 +214,8 @@ export async function GET(request: Request) {
     })
   }
 
-  // Load city signals (cached)
-  const pack = await getCachedCitySignals()
+  // Load city signals (cached, with live compilation fallback)
+  const { pack, liveCompiled } = await getCachedCitySignals()
   // Use real compiled brief or honest empty state - NEVER mock data
   const brief = pack ? compiledFromCitySignalsPackV1(pack) : createEmptyBrief()
 
@@ -251,6 +266,7 @@ export async function GET(request: Request) {
     headers: {
       'Cache-Control': 'no-store',
       'X-RateLimit-Remaining': String(rateLimit.remaining),
+      'X-Flow-Source': pack ? (liveCompiled ? 'live-compiled' : 'storage-pack') : 'empty-brief',
     },
   })
 }
