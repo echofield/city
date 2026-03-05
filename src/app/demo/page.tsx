@@ -4,104 +4,204 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowRight, ArrowLeft, Play, Pause } from 'lucide-react'
 import Link from 'next/link'
-import { ShiftArc } from '@/components/ui/shift-arc'
-import type { ArcPhase } from '@/lib/shift-conductor/shift-arc'
+import { FlowDashboard } from '@/components/ui/flow-dashboard'
+import { DispatchPanel } from '@/components/ui/dispatch-panel'
+import type { ActionType } from '@/lib/flow-engine/driver-anchor'
+import type { ShiftPhase, CorridorStatus } from '@/types/flow-view-model'
 
-// Demo shift timeline - a simulated evening
-const DEMO_TIMELINE = [
+// ════════════════════════════════════════════════════════════════
+// DEMO TIMELINE
+// ════════════════════════════════════════════════════════════════
+
+interface DemoStep {
+  time: string
+  action: ActionType
+  zone: string
+  arrondissement: string
+  cause: string
+  windowLabel: string
+  secondsLeft: number
+  phase: ShiftPhase
+  corridor: string
+  confidence: number
+  stats: {
+    eta: number
+    saturation: number
+    opportunite: number
+    eurH: { low: number; high: number }
+  }
+  friction?: { label: string; implication: string }
+  prochain?: { time: string; zone: string; type: string }
+  opp?: number
+  fric?: number
+  cost?: number
+  signals?: Array<{ label: string; type: 'amber' | 'green' | 'grey' }>
+}
+
+const DEMO_TIMELINE: DemoStep[] = [
   {
     time: '18:30',
-    phase: 'calm' as ArcPhase,
-    phase_progress: 80,
-    state: 'RESET',
-    zone: null,
-    message: 'Calme. Pas encore de demande significative.',
-    action: null,
-    energy: 'CALM',
+    action: 'maintenir',
+    zone: 'Opéra',
+    arrondissement: 'IX',
+    cause: 'Calme. Pas encore de demande significative.',
+    windowLabel: 'PHASE CALME',
+    secondsLeft: 0,
+    phase: 'calme',
+    corridor: 'CENTRE',
+    confidence: 0.65,
+    stats: { eta: 0, saturation: 12, opportunite: 45, eurH: { low: 18, high: 24 } },
   },
   {
     time: '19:15',
-    phase: 'build' as ArcPhase,
-    phase_progress: 25,
-    state: 'WINDOW_OPENING',
+    action: 'anticiper',
     zone: 'Gare de Lyon',
-    message: 'Fenêtre en formation. Premiers signaux.',
-    action: 'Se positionner',
-    energy: 'BUILDING',
+    arrondissement: 'XII',
+    cause: 'Fenêtre en formation. Premiers TGV arrivent.',
+    windowLabel: 'EN FORMATION',
+    secondsLeft: 720,
+    phase: 'montee',
+    corridor: 'SUD',
+    confidence: 0.72,
+    stats: { eta: 18, saturation: 28, opportunite: 68, eurH: { low: 22, high: 30 } },
+    friction: { label: 'Trafic dense périph sud', implication: '+8 min' },
+    prochain: { time: '19:45', zone: 'Bercy', type: 'concert' },
+    opp: 68,
+    fric: 35,
+    cost: 18,
+    signals: [
+      { label: 'Arrivée TGV Lyon 19:32', type: 'amber' },
+      { label: 'Concert Bercy 20:00', type: 'green' },
+    ],
   },
   {
     time: '20:10',
-    phase: 'build' as ArcPhase,
-    phase_progress: 70,
-    state: 'WINDOW_ACTIVE',
+    action: 'rejoindre',
     zone: 'Bercy',
-    message: 'Concert AccorArena. Sortie dans 45 min.',
-    action: 'Arriver maintenant',
-    energy: 'RISING',
+    arrondissement: 'XII',
+    cause: 'Concert AccorArena. Sortie dans 45 min.',
+    windowLabel: 'FENÊTRE ACTIVE',
+    secondsLeft: 480,
+    phase: 'montee',
+    corridor: 'SUD',
+    confidence: 0.85,
+    stats: { eta: 8, saturation: 42, opportunite: 82, eurH: { low: 28, high: 38 } },
+    friction: { label: 'Pluie forte', implication: 'Demande +25%' },
+    prochain: { time: '21:00', zone: 'Bastille', type: 'nightlife' },
+    opp: 82,
+    fric: 42,
+    cost: 8,
+    signals: [
+      { label: 'Sortie concert AccorArena', type: 'green' },
+      { label: 'Pluie demande accrue', type: 'amber' },
+    ],
   },
   {
     time: '21:00',
-    phase: 'peak' as ArcPhase,
-    phase_progress: 20,
-    state: 'HOLD_POSITION',
+    action: 'maintenir',
     zone: 'Bercy',
-    message: 'Sortie concert imminente. Queue position active.',
-    action: 'Tenir position',
-    energy: 'PEAK',
+    arrondissement: 'XII',
+    cause: 'Sortie concert imminente. Queue position active.',
+    windowLabel: 'PIC',
+    secondsLeft: 300,
+    phase: 'pic',
+    corridor: 'SUD',
+    confidence: 0.92,
+    stats: { eta: 0, saturation: 65, opportunite: 95, eurH: { low: 35, high: 48 } },
+    opp: 95,
+    fric: 65,
+    cost: 0,
+    signals: [
+      { label: 'Sortie concert 21:15', type: 'green' },
+      { label: 'Surge x1.8', type: 'green' },
+    ],
   },
   {
     time: '22:25',
-    phase: 'peak' as ArcPhase,
-    phase_progress: 60,
-    state: 'WINDOW_ACTIVE',
-    zone: 'Bastille',
-    message: 'Fenêtre active. Flux nightlife en cours.',
-    action: 'Zone chaude',
-    energy: 'PEAK',
+    action: 'anticiper',
+    zone: 'Montmartre',
+    arrondissement: 'XVIII',
+    cause: 'Champ favorise nord.',
+    windowLabel: 'EN FORMATION',
+    secondsLeft: 130,
+    phase: 'pic',
+    corridor: 'NORD',
+    confidence: 0.68,
+    stats: { eta: 24, saturation: 19, opportunite: 90, eurH: { low: 25, high: 34 } },
+    friction: { label: 'Pluie forte +15min', implication: 'Demande accrue centre' },
+    prochain: { time: '23:15', zone: 'Bastille', type: 'concert' },
+    opp: 90,
+    fric: 43,
+    cost: 12,
+    signals: [
+      { label: 'Sortie théâtre Châtelet', type: 'amber' },
+      { label: 'Surge x1.4 Bastille', type: 'green' },
+    ],
   },
   {
     time: '23:45',
-    phase: 'peak' as ArcPhase,
-    phase_progress: 90,
-    state: 'FLOW_SHIFT',
+    action: 'rejoindre',
     zone: 'Oberkampf',
-    message: 'Transition. Nightlife se déplace vers l\'Est.',
-    action: 'Suivre le flux',
-    energy: 'PEAK',
+    arrondissement: 'XI',
+    cause: 'Transition. Nightlife se déplace vers Est.',
+    windowLabel: 'FLUX EN MOUVEMENT',
+    secondsLeft: 360,
+    phase: 'pic',
+    corridor: 'EST',
+    confidence: 0.78,
+    stats: { eta: 12, saturation: 55, opportunite: 78, eurH: { low: 30, high: 42 } },
+    prochain: { time: '00:30', zone: 'République', type: 'dispersion' },
+    opp: 78,
+    fric: 55,
+    cost: 12,
+    signals: [
+      { label: 'Fermeture bars 02:00', type: 'amber' },
+      { label: 'Dernier métro 00:45', type: 'amber' },
+    ],
   },
   {
     time: '00:30',
-    phase: 'release' as ArcPhase,
-    phase_progress: 40,
-    state: 'WINDOW_CLOSING',
+    action: 'tenter',
     zone: 'République',
-    message: 'Dispersion post-pic. Dernières fenêtres.',
-    action: 'Dernière vague',
-    energy: 'DISPERSION',
+    arrondissement: 'III',
+    cause: 'Dispersion post-pic. Dernières fenêtres.',
+    windowLabel: 'FENÊTRE SE FERME',
+    secondsLeft: 180,
+    phase: 'dispersion',
+    corridor: 'EST',
+    confidence: 0.62,
+    stats: { eta: 6, saturation: 38, opportunite: 55, eurH: { low: 22, high: 32 } },
+    opp: 55,
+    fric: 38,
+    cost: 6,
+    signals: [
+      { label: 'Dernière vague nightlife', type: 'amber' },
+    ],
   },
 ]
 
-const STATE_LABELS: Record<string, string> = {
-  RESET: 'Phase calme',
-  WINDOW_OPENING: 'Fenêtre en formation',
-  WINDOW_ACTIVE: 'Fenêtre active',
-  HOLD_POSITION: 'Tenir position',
-  FLOW_SHIFT: 'Flux en mouvement',
-  WINDOW_CLOSING: 'Fenêtre se ferme',
-}
+const CORRIDOR_STATUSES: CorridorStatus[] = [
+  { direction: 'nord', status: 'fluide', pressure: 0.3, reason: null },
+  { direction: 'est', status: 'dense', pressure: 0.7, reason: null },
+  { direction: 'sud', status: 'fluide', pressure: 0.4, reason: null },
+  { direction: 'ouest', status: 'dense', pressure: 0.65, reason: 'PSG sortie' },
+]
 
-const STATE_COLORS: Record<string, string> = {
-  RESET: 'text-text-ghost',
-  WINDOW_OPENING: 'text-intent',
-  WINDOW_ACTIVE: 'text-signal',
-  HOLD_POSITION: 'text-calm',
-  FLOW_SHIFT: 'text-signal',
-  WINDOW_CLOSING: 'text-alert-muted',
-}
+const TIMELINE_EVENTS = [
+  { time: '03:41', phase: 'pic' as const, zone: 'Quartier Latin' },
+  { time: '04:11', phase: 'dispersion' as const, zone: 'Châtelet' },
+  { time: '04:41', phase: 'transition' as const, zone: 'Bastille' },
+  { time: '05:11', phase: 'nuit' as const, zone: 'Trocadéro' },
+]
+
+// ════════════════════════════════════════════════════════════════
+// COMPONENT
+// ════════════════════════════════════════════════════════════════
 
 export default function DemoPage() {
-  const [currentIndex, setCurrentIndex] = useState(0)
+  const [currentIndex, setCurrentIndex] = useState(4) // Start at Montmartre step
   const [isPlaying, setIsPlaying] = useState(false)
+  const [showDispatch, setShowDispatch] = useState(false)
 
   const current = DEMO_TIMELINE[currentIndex]
 
@@ -117,183 +217,149 @@ export default function DemoPage() {
         }
         return prev + 1
       })
-    }, 3000) // 3 seconds per step
+    }, 5000)
 
     return () => clearInterval(timer)
   }, [isPlaying])
 
-  const goNext = () => {
-    if (currentIndex < DEMO_TIMELINE.length - 1) {
-      setCurrentIndex(currentIndex + 1)
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight' && currentIndex < DEMO_TIMELINE.length - 1) {
+        setCurrentIndex(currentIndex + 1)
+        setIsPlaying(false)
+      }
+      if (e.key === 'ArrowLeft' && currentIndex > 0) {
+        setCurrentIndex(currentIndex - 1)
+        setIsPlaying(false)
+      }
+      if (e.key === ' ') {
+        e.preventDefault()
+        setIsPlaying(!isPlaying)
+      }
+      if (e.key === 'd' || e.key === 'D') {
+        setShowDispatch(!showDispatch)
+      }
     }
-  }
 
-  const goPrev = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex(currentIndex - 1)
-    }
-  }
-
-  const togglePlay = () => {
-    setIsPlaying(!isPlaying)
-  }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [currentIndex, isPlaying, showDispatch])
 
   return (
-    <div className="min-h-screen bg-void">
-      {/* Header */}
-      <header className="border-b border-border-subtle sticky top-0 bg-void/95 backdrop-blur-sm z-10">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <Link
-            href="/"
-            className="p-1.5 rounded border border-border text-text-ghost hover:text-text-secondary transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <div className="text-center">
-            <h1 className="text-sm text-text-primary">Démo</h1>
-            <p className="text-xs text-text-ghost">Une soirée type</p>
-          </div>
-          <div className="w-8" /> {/* Spacer */}
+    <div className="min-h-screen bg-void relative">
+      {/* Demo header */}
+      <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-2 bg-void/80 backdrop-blur-sm border-b border-border-subtle">
+        <Link
+          href="/"
+          className="p-1.5 rounded border border-border text-text-ghost hover:text-text-secondary transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+        </Link>
+
+        <div className="flex items-center gap-4">
+          <span className="text-sm text-text-ghost">Démo</span>
+          <span className="text-lg text-text-primary font-mono">{current.time}</span>
         </div>
-      </header>
-
-      {/* Shift Arc */}
-      <div className="max-w-2xl mx-auto px-4 pt-4">
-        <ShiftArc
-          arc={{
-            current_phase: current.phase,
-            phase_progress: current.phase_progress,
-            next_phase: currentIndex < DEMO_TIMELINE.length - 1
-              ? DEMO_TIMELINE[currentIndex + 1].phase
-              : null,
-            next_phase_in_minutes: currentIndex < DEMO_TIMELINE.length - 1 ? 45 : null,
-            energy: current.energy as any,
-          }}
-        />
-      </div>
-
-      {/* Main Demo Content */}
-      <main className="max-w-2xl mx-auto px-4 py-8">
-        {/* Time indicator */}
-        <div className="text-center mb-8">
-          <motion.p
-            key={current.time}
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="text-5xl font-light text-text-primary"
-          >
-            {current.time}
-          </motion.p>
-        </div>
-
-        {/* Current State Card */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={currentIndex}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.3 }}
-            className="p-6 rounded-xl bg-surface border border-border-subtle mb-6"
-          >
-            {/* State indicator */}
-            <div className="flex items-center gap-2 mb-4">
-              <span className={`w-2 h-2 rounded-full ${
-                current.state === 'WINDOW_ACTIVE' ? 'bg-signal animate-pulse' :
-                current.state === 'HOLD_POSITION' ? 'bg-calm' :
-                current.state === 'WINDOW_OPENING' ? 'bg-intent' :
-                'bg-text-ghost'
-              }`} />
-              <span className={`text-xs uppercase tracking-wider ${STATE_COLORS[current.state]}`}>
-                {STATE_LABELS[current.state]}
-              </span>
-            </div>
-
-            {/* Zone */}
-            {current.zone ? (
-              <p className={`text-3xl font-light mb-2 ${STATE_COLORS[current.state]}`}>
-                {current.zone}
-              </p>
-            ) : (
-              <p className="text-3xl font-light mb-2 text-text-ghost">
-                Pas de cible
-              </p>
-            )}
-
-            {/* Message */}
-            <p className="text-text-secondary mb-4">
-              {current.message}
-            </p>
-
-            {/* Action */}
-            {current.action && (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-signal/10 border border-signal/20">
-                <span className="text-signal text-sm">{current.action}</span>
-              </div>
-            )}
-          </motion.div>
-        </AnimatePresence>
 
         {/* Timeline dots */}
-        <div className="flex justify-center gap-2 mb-8">
+        <div className="flex items-center gap-1.5">
           {DEMO_TIMELINE.map((_, index) => (
             <button
               key={index}
               onClick={() => { setCurrentIndex(index); setIsPlaying(false) }}
               className={`w-2 h-2 rounded-full transition-colors ${
                 index === currentIndex ? 'bg-signal' :
-                index < currentIndex ? 'bg-text-ghost' : 'bg-border'
+                index < currentIndex ? 'bg-text-ghost/50' : 'bg-border'
               }`}
             />
           ))}
         </div>
 
         {/* Controls */}
-        <div className="flex items-center justify-center gap-4">
+        <div className="flex items-center gap-2">
           <button
-            onClick={goPrev}
-            disabled={currentIndex === 0}
-            className="p-3 rounded-lg border border-border text-text-ghost hover:text-text-secondary disabled:opacity-30 transition-colors"
+            onClick={() => setIsPlaying(!isPlaying)}
+            className="p-2 rounded border border-border text-text-ghost hover:text-text-secondary transition-colors"
           >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-
-          <button
-            onClick={togglePlay}
-            className="p-4 rounded-lg bg-signal text-void hover:bg-signal-dark transition-colors"
-          >
-            {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-          </button>
-
-          <button
-            onClick={goNext}
-            disabled={currentIndex === DEMO_TIMELINE.length - 1}
-            className="p-3 rounded-lg border border-border text-text-ghost hover:text-text-secondary disabled:opacity-30 transition-colors"
-          >
-            <ArrowRight className="w-5 h-5" />
+            {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
           </button>
         </div>
+      </div>
 
-        {/* Explanation */}
-        <div className="mt-12 p-4 rounded-lg bg-surface-raised border border-border-subtle">
-          <p className="text-sm text-text-secondary text-center">
-            Cette démo simule une soirée complète.
-            <br />
-            <span className="text-text-ghost">Flow te montre le rythme en temps réel.</span>
-          </p>
-        </div>
-
-        {/* CTA */}
-        <div className="mt-8 text-center">
-          <Link
-            href="/onboarding"
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-signal text-void font-medium hover:bg-signal-dark transition-colors"
+      {/* Main dashboard */}
+      <div className="pt-12">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={currentIndex}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
           >
-            <span>Commencer avec Flow</span>
-            <ArrowRight className="w-4 h-4" />
-          </Link>
-        </div>
-      </main>
+            <FlowDashboard
+              action={current.action}
+              zone={current.zone}
+              arrondissement={current.arrondissement}
+              cause={current.cause}
+              secondsLeft={current.secondsLeft}
+              windowLabel={current.windowLabel}
+              stats={current.stats}
+              friction={current.friction}
+              prochain={current.prochain}
+              currentPhase={current.phase}
+              corridor={current.corridor}
+              confidence={current.confidence}
+              eurEstimate={current.stats.eurH}
+              opp={current.opp}
+              fric={current.fric}
+              cost={current.cost}
+              signals={current.signals}
+              corridorStatuses={CORRIDOR_STATUSES}
+              onDispatch={() => setShowDispatch(true)}
+            />
+          </motion.div>
+        </AnimatePresence>
+      </div>
+
+      {/* DISPATCH Panel */}
+      <AnimatePresence>
+        {showDispatch && (
+          <DispatchPanel
+            isOpen={showDispatch}
+            onClose={() => setShowDispatch(false)}
+            currentPhase={current.phase}
+            session={{
+              duration: '4m',
+              rides: 1,
+              targetEur: 120,
+              currentEur: 2,
+              efficiency: 59,
+            }}
+            corridorStatuses={CORRIDOR_STATUSES}
+            timeline={TIMELINE_EVENTS}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Keyboard hints */}
+      <div className="fixed bottom-4 left-4 text-xs text-text-ghost/50 space-y-1">
+        <p>← → naviguer</p>
+        <p>R mode radar</p>
+        <p>D dispatch</p>
+        <p>Espace play/pause</p>
+      </div>
+
+      {/* CTA */}
+      <div className="fixed bottom-4 right-4">
+        <Link
+          href="/onboarding"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-signal text-void text-sm font-medium hover:bg-signal-dark transition-colors"
+        >
+          <span>Commencer</span>
+          <ArrowRight className="w-4 h-4" />
+        </Link>
+      </div>
     </div>
   )
 }

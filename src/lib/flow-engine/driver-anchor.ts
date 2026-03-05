@@ -241,7 +241,15 @@ export function computeZoneScores(input: ScoringInput): ZoneScore[] {
 // RECOMMENDATION
 // ════════════════════════════════════════════════════════════════
 
-export type ActionType = 'maintenir' | 'rejoindre' | 'opportunite'
+/**
+ * Action verbs from FLOW vocabulary system
+ * - maintenir: Stay in area
+ * - rejoindre: Move to area
+ * - anticiper: Go early (forming window)
+ * - contourner: Avoid congestion
+ * - tenter: Opportunistic try
+ */
+export type ActionType = 'maintenir' | 'rejoindre' | 'anticiper' | 'contourner' | 'tenter'
 
 export interface Recommendation {
   /** Primary action */
@@ -297,7 +305,7 @@ export function computeRecommendations(
 
   if (bestStrategic && bestStrategic.finalScore > bestLocal.finalScore + threshold) {
     strategic = {
-      action: 'opportunite',
+      action: 'tenter',
       zone: bestStrategic.zone,
       cause: bestStrategic.reason,
       score: bestStrategic.finalScore,

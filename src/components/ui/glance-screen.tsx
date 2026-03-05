@@ -22,28 +22,46 @@ import type { ActionType } from '@/lib/flow-engine/driver-anchor'
 // ACTION COLORS
 // ════════════════════════════════════════════════════════════════
 
-const ACTION_COLORS: Record<ActionType, { bg: string; text: string; glow: string }> = {
+// FLOW vocabulary — sound like an experienced Paris driver
+const ACTION_COLORS: Record<ActionType, { bg: string; text: string; glow: string; border: string }> = {
   maintenir: {
     bg: 'bg-text-ghost/10',
     text: 'text-text-ghost',
     glow: '',
+    border: 'border-l-text-ghost',
   },
   rejoindre: {
     bg: 'bg-signal/10',
     text: 'text-signal',
     glow: 'shadow-[0_0_30px_rgba(46,204,113,0.2)]',
+    border: 'border-l-signal',
   },
-  opportunite: {
+  anticiper: {
+    bg: 'bg-intent/10',
+    text: 'text-intent',
+    glow: 'shadow-[0_0_30px_rgba(201,165,116,0.2)]',
+    border: 'border-l-intent',
+  },
+  contourner: {
+    bg: 'bg-calm/10',
+    text: 'text-calm',
+    glow: 'shadow-[0_0_30px_rgba(92,143,217,0.2)]',
+    border: 'border-l-calm',
+  },
+  tenter: {
     bg: 'bg-amber-500/10',
     text: 'text-amber-400',
     glow: 'shadow-[0_0_30px_rgba(245,158,11,0.25)]',
+    border: 'border-l-amber-400',
   },
 }
 
 const ACTION_LABELS: Record<ActionType, string> = {
   maintenir: 'MAINTENIR',
   rejoindre: 'REJOINDRE',
-  opportunite: 'OPPORTUNITÉ',
+  anticiper: 'ANTICIPER',
+  contourner: 'CONTOURNER',
+  tenter: 'TENTER',
 }
 
 // ════════════════════════════════════════════════════════════════
