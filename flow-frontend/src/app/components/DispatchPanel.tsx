@@ -140,10 +140,12 @@ export function DispatchPanel({
   const efficiency = Math.min(99, Math.round(50 + flowState.confidence * 0.4 + flowState.shiftProgress * 20));
 
   // Build +2H timeline from upcoming and peaks
+  const upcoming = flowState.upcoming ?? [];
+  const peaks = flowState.peaks ?? [];
   const timelineSlots = [
-    ...flowState.upcoming.slice(0, 4).map((slot, i) => ({
+    ...upcoming.slice(0, 4).map((slot, i) => ({
       time: slot.time,
-      phase: getTimelinePhaseLabel(i, flowState.upcoming.length),
+      phase: getTimelinePhaseLabel(i, upcoming.length),
       zone: slot.zone,
       phaseColor: i === 0 ? C.green : C.amber,
     })),
@@ -151,7 +153,7 @@ export function DispatchPanel({
 
   // Add peaks if we have room
   if (timelineSlots.length < 4) {
-    flowState.peaks.slice(0, 4 - timelineSlots.length).forEach((peak) => {
+    peaks.slice(0, 4 - timelineSlots.length).forEach((peak) => {
       timelineSlots.push({
         time: peak.time,
         phase: "PIC",

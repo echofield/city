@@ -748,7 +748,7 @@ export function Dashboard(props: {
                   </p>
 
                   {/* Alternatives */}
-                  {flowState.alternatives.length > 0 && (
+                  {flowState.alternatives && flowState.alternatives.length > 0 && (
                     <div className="flex items-center gap-2 flex-wrap">
                       <span style={{ ...label, fontSize: "0.65rem", color: C.textDim }}>Alt:</span>
                       {flowState.alternatives.map((alt) => (
@@ -771,7 +771,7 @@ export function Dashboard(props: {
                   )}
 
                   {/* Context signals */}
-                  {flowState.signals.length > 0 && (
+                  {flowState.signals && flowState.signals.length > 0 && (
                     <div className="flex flex-col gap-1.5 pt-1" style={{ borderTop: `1px solid ${C.border}` }}>
                       {flowState.signals.map((sig, i) => (
                         <div key={i} className="flex items-center gap-2">
