@@ -110,13 +110,17 @@ export function DispatchPanel({
   const sessionDuration = formatSessionDuration(sessionDurationMs);
 
   // Compute corridor statuses from real zone data
+  const zoneHeat = flowState.zoneHeat ?? {};
+  const zoneSaturation = flowState.zoneSaturation ?? {};
+  const signals = flowState.signals ?? [];
+
   const corridorStatuses = CORRIDOR_DEFS.map((corridor) => {
     const density = getCorridorDensity(
       corridor.zones,
-      flowState.zoneHeat,
-      flowState.zoneSaturation
+      zoneHeat,
+      zoneSaturation
     );
-    const impact = getImpactForCorridor(corridor.id, flowState.signals);
+    const impact = getImpactForCorridor(corridor.id, signals);
     return {
       ...corridor,
       ...density,
@@ -138,7 +142,7 @@ export function DispatchPanel({
   const avgEarnings = (earningsEstimate[0] + earningsEstimate[1]) / 2;
   const estimatedCourses = Math.max(1, Math.floor(sessionHours * 2.5)); // ~2.5 courses/hour
   const targetEarnings = 120; // EUR target
-  const efficiency = Math.min(99, Math.round(50 + flowState.confidence * 0.4 + flowState.shiftProgress * 20));
+  const efficiency = Math.min(99, Math.round(50 + (flowState.confidence ?? 0) * 0.4 + (flowState.shiftProgress ?? 0) * 20));
 
   // Build +2H timeline from upcoming and peaks
   const upcoming = flowState.upcoming ?? [];
@@ -210,16 +214,16 @@ export function DispatchPanel({
                 ...label,
                 fontSize: "0.55rem",
                 fontWeight: 500,
-                color: flowState.shiftPhase === "pic" ? C.green : C.amber,
+                color: (flowState.shiftPhase ?? "calme") === "pic" ? C.green : C.amber,
                 backgroundColor:
-                  flowState.shiftPhase === "pic" ? `${C.green}15` : `${C.amber}15`,
+                  (flowState.shiftPhase ?? "calme") === "pic" ? `${C.green}15` : `${C.amber}15`,
                 border: `1px solid ${
-                  flowState.shiftPhase === "pic" ? C.greenDim : C.amberDim
+                  (flowState.shiftPhase ?? "calme") === "pic" ? C.greenDim : C.amberDim
                 }`,
                 borderRadius: 2,
               }}
             >
-              {getPhaseLabel(flowState.shiftPhase)}
+              {getPhaseLabel(flowState.shiftPhase ?? "calme")}
             </span>
           </div>
           <button
@@ -275,7 +279,7 @@ export function DispatchPanel({
             <div
               className="h-full rounded-full"
               style={{
-                width: `${Math.min(100, (flowState.sessionEarnings / targetEarnings) * 100)}%`,
+                width: `${Math.min(100, ((flowState.sessionEarnings ?? 0) / targetEarnings) * 100)}%`,
                 backgroundColor: C.green,
                 transition: "width 0.5s ease",
               }}

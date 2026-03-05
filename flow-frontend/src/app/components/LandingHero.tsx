@@ -96,10 +96,10 @@ export function LandingHero() {
 
   const mapState = flowState
     ? {
-        zoneHeat: flowState.zoneHeat,
+        zoneHeat: flowState.zoneHeat ?? {},
         zoneStates: zoneStateApiToDisplay(flowState.zoneState),
-        zoneSaturation: flowState.zoneSaturation,
-        favoredZoneIds: flowState.favoredZoneIds,
+        zoneSaturation: flowState.zoneSaturation ?? {},
+        favoredZoneIds: flowState.favoredZoneIds ?? [],
         windowState: flowState.windowState,
       }
     : getMinimalMapState(breathPhase);

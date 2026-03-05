@@ -386,8 +386,8 @@ export function Dashboard(props: {
     return <div className="h-screen w-screen" style={{ backgroundColor: C.bg }} />;
   }
 
-  const actionColor = getActionColor(flowState.action);
-  const windowColor = getWindowColor(flowState.windowState);
+  const actionColor = getActionColor(flowState.action ?? "hold");
+  const windowColor = getWindowColor(flowState.windowState ?? "stable");
   const fieldActive = flowState.windowState === "active" || flowState.windowState === "forming";
 
   const tabs: { id: TabId; label: string; full: string }[] = [
@@ -440,7 +440,7 @@ export function Dashboard(props: {
               letterSpacing: "0.08em",
             }}
           >
-            {getCertaintyTone(flowState.confidence)}
+            {getCertaintyTone(flowState.confidence ?? 0)}
           </span>
         </div>
         <div className="flex items-center gap-4">
@@ -552,7 +552,7 @@ export function Dashboard(props: {
         animate={{ opacity: entered ? 1 : 0 }}
         transition={{ duration: 0.4, delay: 0.05 }}
       >
-        <ShiftArc phase={flowState.shiftPhase} progress={flowState.shiftProgress} />
+        <ShiftArc phase={flowState.shiftPhase ?? "calme"} progress={flowState.shiftProgress ?? 0} />
         <AnimatePresence>
           {tonightAnchor && (
             <motion.p
@@ -584,12 +584,12 @@ export function Dashboard(props: {
           transition={{ duration: 0.6, delay: 0.1 }}
         >
           <FlowMap
-            zoneHeat={flowState.zoneHeat}
+            zoneHeat={flowState.zoneHeat ?? {}}
             zoneStates={zoneStateApiToDisplay(flowState.zoneState)}
-            zoneSaturation={flowState.zoneSaturation}
-            favoredZoneIds={flowState.favoredZoneIds}
+            zoneSaturation={flowState.zoneSaturation ?? {}}
+            favoredZoneIds={flowState.favoredZoneIds ?? []}
             breathPhase={breathPhase}
-            windowState={flowState.windowState}
+            windowState={flowState.windowState ?? "stable"}
             banlieueHubs={flowState.banlieueHubs}
           />
         </motion.div>
@@ -648,7 +648,7 @@ export function Dashboard(props: {
                       letterSpacing: "-0.02em",
                     }}
                   >
-                    {formatCountdown(flowState.windowCountdownSec)}
+                    {formatCountdown(flowState.windowCountdownSec ?? 0)}
                   </span>
                   {/* Countdown target label */}
                   {flowState.countdownTargetLabel && (
@@ -928,9 +928,9 @@ export function Dashboard(props: {
 
                   <div className="grid grid-cols-2 gap-3">
                     <StatCard cardLabel="Shift en cours" value={formatDuration(Date.now() - sessionStartRef.current)} />
-                    <StatCard cardLabel="Estimation" value={`~${flowState.sessionEarnings} EUR`} highlight />
-                    <StatCard cardLabel="Confiance" value={`${flowState.confidence}%`} />
-                    <StatCard cardLabel="Phase" value={flowState.shiftPhase.toUpperCase()} />
+                    <StatCard cardLabel="Estimation" value={`~${flowState.sessionEarnings ?? 0} EUR`} highlight />
+                    <StatCard cardLabel="Confiance" value={`${flowState.confidence ?? 0}%`} />
+                    <StatCard cardLabel="Phase" value={(flowState.shiftPhase ?? "calme").toUpperCase()} />
                   </div>
 
                   <div className="pt-3" style={{ borderTop: `1px solid ${C.border}` }}>
