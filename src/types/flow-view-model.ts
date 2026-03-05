@@ -382,3 +382,67 @@ export interface FlowViewModelV18 extends FlowViewModel {
     demandConfidence: number
   }
 }
+
+// ════════════════════════════════════════════════════════════════
+// v1.9 — SIGNAL EXPLANATION (Intelligence Layer)
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * Signal Explanation — tap-to-reveal intelligence
+ *
+ * The 3-layer UX:
+ * Layer 1: Action (what to do)
+ * Layer 2: Why (cause → consequence)
+ * Layer 3: Corridor analysis (deep)
+ */
+export interface SignalExplanation {
+  /** Signal ID for linking */
+  id: string
+  /** Verb-based title: "Sorties TGV" not "EVENT" */
+  title: string
+  /** Zone affected */
+  zone: string
+  /** CAUSE: What triggered this */
+  cause: string
+  /** SOURCE: Where the signal comes from */
+  source: string
+  /** MAGNITUDE: Estimated impact (e.g., "~900 voyageurs") */
+  magnitude?: string
+  /** WINDOW: Time frame (e.g., "00:20 → 00:40") */
+  window?: string
+  /** RAMIFICATION: Where flow goes (e.g., "→ République → Bastille") */
+  ramification?: string
+  /** OPPORTUNITY: Expected ride value (e.g., "30–45 €/h") */
+  opportunity?: string
+  /** Confidence 0-1 */
+  confidence: number
+  /** Deeper flow analysis for Layer 3 */
+  flowAnalysis?: {
+    /** Corridor direction */
+    direction: CorridorDirection
+    /** Zone chain */
+    chain: string[]
+    /** Pressure intensity 0-1 */
+    pressure: number
+  }
+}
+
+/**
+ * Verb-based signal labels
+ * Transform "EVENT — Zone" → "Verb — Zone"
+ */
+export const SIGNAL_VERBS: Record<string, string> = {
+  'train_arrival': 'Sorties TGV',
+  'concert_exit': 'Sorties concert',
+  'metro_closing': 'Fermeture métro',
+  'airport_arrival': 'Arrivées aéroport',
+  'rain_starting': 'Pluie imminente',
+  'bar_closing': 'Dispersion bars',
+  'match_psg': 'Match PSG',
+  'last_train': 'Derniers trains',
+  'nightlife_peak': 'Pic nightlife',
+  'return_wave': 'Vague retour',
+  'event': 'Événement',
+  'weather': 'Météo',
+  'transport': 'Transport',
+}
