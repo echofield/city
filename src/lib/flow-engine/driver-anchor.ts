@@ -241,7 +241,7 @@ export function computeZoneScores(input: ScoringInput): ZoneScore[] {
 // RECOMMENDATION
 // ════════════════════════════════════════════════════════════════
 
-export type ActionType = 'maintenir' | 'bouger' | 'opportunite'
+export type ActionType = 'maintenir' | 'rejoindre' | 'opportunite'
 
 export interface Recommendation {
   /** Primary action */
@@ -280,7 +280,7 @@ export function computeRecommendations(
 
   // Best local
   const bestLocal = localZones[0] || scores[0]
-  const localAction: ActionType = bestLocal.zone === anchor.zone ? 'maintenir' : 'bouger'
+  const localAction: ActionType = bestLocal.zone === anchor.zone ? 'maintenir' : 'rejoindre'
 
   const local: Recommendation = {
     action: localAction,

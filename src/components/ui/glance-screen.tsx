@@ -28,7 +28,7 @@ const ACTION_COLORS: Record<ActionType, { bg: string; text: string; glow: string
     text: 'text-text-ghost',
     glow: '',
   },
-  bouger: {
+  rejoindre: {
     bg: 'bg-signal/10',
     text: 'text-signal',
     glow: 'shadow-[0_0_30px_rgba(46,204,113,0.2)]',
@@ -42,13 +42,22 @@ const ACTION_COLORS: Record<ActionType, { bg: string; text: string; glow: string
 
 const ACTION_LABELS: Record<ActionType, string> = {
   maintenir: 'MAINTENIR',
-  bouger: 'BOUGER',
+  rejoindre: 'REJOINDRE',
   opportunite: 'OPPORTUNITÉ',
 }
 
 // ════════════════════════════════════════════════════════════════
 // PROPS
 // ════════════════════════════════════════════════════════════════
+
+export interface VenueInfo {
+  /** Venue name (e.g., "Olympia") */
+  name: string
+  /** Closing/exit time (e.g., "23:15") */
+  time: string
+  /** Estimated exits (e.g., "~800") */
+  exits?: string
+}
 
 interface GlanceScreenProps {
   /** Primary action */
@@ -57,6 +66,8 @@ interface GlanceScreenProps {
   zone: string
   /** Cause (why this action) */
   cause: string
+  /** Venue info if nearby theatre/concert closing */
+  venue?: VenueInfo
   /** Seconds remaining in window */
   secondsLeft?: number
   /** Window label (e.g., "Fenêtre ferme") */
@@ -79,6 +90,7 @@ export function GlanceScreen({
   action,
   zone,
   cause,
+  venue,
   secondsLeft,
   windowLabel,
   confidence,
@@ -152,20 +164,41 @@ export function GlanceScreen({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.1 }}
-          className="text-2xl md:text-3xl text-text-primary mb-4"
+          className="text-2xl md:text-3xl text-text-primary mb-3"
         >
           {zone}
         </motion.p>
 
-        {/* CAUSE — Why */}
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="text-sm text-text-secondary text-center max-w-xs"
-        >
-          {cause}
-        </motion.p>
+        {/* VENUE — Theatre/concert closing info (compressed) */}
+        {venue && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.15 }}
+            className="mb-3 text-center"
+          >
+            <p className="text-sm">
+              <span className="text-signal">{venue.name}</span>
+              <span className="text-text-ghost"> ferme </span>
+              <span className="text-text-primary font-mono">{venue.time}</span>
+              {venue.exits && (
+                <span className="text-text-ghost"> · {venue.exits}</span>
+              )}
+            </p>
+          </motion.div>
+        )}
+
+        {/* CAUSE — Why (only if no venue, to avoid repetition) */}
+        {!venue && (
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+            className="text-sm text-text-secondary text-center max-w-xs"
+          >
+            {cause}
+          </motion.p>
+        )}
 
         {/* Confidence indicator */}
         {confidence !== undefined && (
