@@ -827,7 +827,7 @@ export function Dashboard(props: {
                       <span className="w-20" style={{ ...label, color: C.textDim, fontSize: "0.55rem" }}>SAT.</span>
                       <span className="w-16 text-right" style={{ ...mono, color: C.textDim, fontSize: "0.55rem" }}>INT.</span>
                     </div>
-                    {flowState.upcoming.map((slot, i) => {
+                    {(flowState.upcoming ?? []).map((slot, i) => {
                       const slotIntensity = slot.earnings >= 30 ? "FORT" : slot.earnings >= 20 ? "MODERE" : "FAIBLE";
                       return (
                         <div
@@ -869,7 +869,7 @@ export function Dashboard(props: {
                     PICS ATTENDUS
                   </span>
 
-                  {flowState.peaks.map((peak, i) => (
+                  {(flowState.peaks ?? []).map((peak, i) => (
                     <div
                       key={i}
                       className="flex items-center justify-between px-4 py-3"
@@ -896,7 +896,7 @@ export function Dashboard(props: {
                       SIGNAUX
                     </span>
                     <div className="flex flex-col gap-2 mt-3">
-                      {flowState.signals.map((sig, i) => (
+                      {(flowState.signals ?? []).map((sig, i) => (
                         <div key={i} className="flex items-center gap-2">
                           <div
                             style={{

@@ -134,7 +134,8 @@ export function DispatchPanel({
 
   // Session stats (computed from flow state)
   const sessionHours = sessionDurationMs / 3600000;
-  const avgEarnings = (flowState.earningsEstimate[0] + flowState.earningsEstimate[1]) / 2;
+  const earningsEstimate = flowState.earningsEstimate ?? [0, 0];
+  const avgEarnings = (earningsEstimate[0] + earningsEstimate[1]) / 2;
   const estimatedCourses = Math.max(1, Math.floor(sessionHours * 2.5)); // ~2.5 courses/hour
   const targetEarnings = 120; // EUR target
   const efficiency = Math.min(99, Math.round(50 + flowState.confidence * 0.4 + flowState.shiftProgress * 20));
