@@ -1,0 +1,206 @@
+{
+  "version": "1.0",
+  "description": "15 Paris zones that generate ~70% of night VTC rides. Used as skeleton when API signals are thin.",
+  "zones": [
+    {
+      "id": "bastille",
+      "name": "Bastille",
+      "arrondissements": ["11", "12"],
+      "corridor": "est",
+      "tags": ["bars", "club"],
+      "windows": {
+        "weeknight": { "start": "23:30", "end": "02:30", "intensity": 3 },
+        "weekend":   { "start": "23:00", "end": "03:30", "intensity": 5 }
+      },
+      "quoi": "bars pleins · ça sort",
+      "confidence": 0.75
+    },
+    {
+      "id": "oberkampf",
+      "name": "Oberkampf",
+      "arrondissements": ["11", "20"],
+      "corridor": "est",
+      "tags": ["bars", "club"],
+      "windows": {
+        "weeknight": { "start": "23:30", "end": "02:00", "intensity": 3 },
+        "weekend":   { "start": "23:00", "end": "03:00", "intensity": 4 }
+      },
+      "quoi": "bars Oberkampf · sortie EST",
+      "confidence": 0.70
+    },
+    {
+      "id": "republique",
+      "name": "République",
+      "arrondissements": ["10", "11", "3"],
+      "corridor": "est",
+      "tags": ["bars", "transport"],
+      "windows": {
+        "weeknight": { "start": "23:00", "end": "01:30", "intensity": 3 },
+        "weekend":   { "start": "23:00", "end": "02:30", "intensity": 4 }
+      },
+      "quoi": "spillover République · flux nuit",
+      "confidence": 0.65
+    },
+    {
+      "id": "chatelet",
+      "name": "Châtelet–Les Halles",
+      "arrondissements": ["1", "2", "4"],
+      "corridor": "centre",
+      "tags": ["bars", "transport", "restos"],
+      "windows": {
+        "weeknight": { "start": "22:30", "end": "01:00", "intensity": 3 },
+        "weekend":   { "start": "22:30", "end": "02:00", "intensity": 4 }
+      },
+      "quoi": "dernier métro · sorties centre",
+      "confidence": 0.70
+    },
+    {
+      "id": "marais",
+      "name": "Le Marais",
+      "arrondissements": ["3", "4"],
+      "corridor": "centre",
+      "tags": ["bars", "restos"],
+      "windows": {
+        "weeknight": { "start": "22:00", "end": "01:00", "intensity": 2 },
+        "weekend":   { "start": "22:00", "end": "02:00", "intensity": 3 }
+      },
+      "quoi": "restos + bars Marais · retours",
+      "confidence": 0.65
+    },
+    {
+      "id": "pigalle",
+      "name": "Pigalle",
+      "arrondissements": ["9", "18"],
+      "corridor": "nord",
+      "tags": ["club", "bars"],
+      "windows": {
+        "weeknight": { "start": "00:00", "end": "03:00", "intensity": 3 },
+        "weekend":   { "start": "23:30", "end": "04:00", "intensity": 5 }
+      },
+      "quoi": "clubs Pigalle · sortie NORD",
+      "confidence": 0.75
+    },
+    {
+      "id": "grands-boulevards",
+      "name": "Grands Boulevards / Opéra",
+      "arrondissements": ["9", "2"],
+      "corridor": "centre",
+      "tags": ["restos", "bureau", "hotels"],
+      "windows": {
+        "weeknight": { "start": "21:00", "end": "00:30", "intensity": 3 },
+        "weekend":   { "start": "21:30", "end": "01:30", "intensity": 3 }
+      },
+      "quoi": "restos + théâtres ferment · hôtels",
+      "confidence": 0.65
+    },
+    {
+      "id": "canal-saint-martin",
+      "name": "Canal Saint-Martin",
+      "arrondissements": ["10", "11"],
+      "corridor": "est",
+      "tags": ["bars"],
+      "windows": {
+        "weeknight": { "start": "23:00", "end": "01:30", "intensity": 2 },
+        "weekend":   { "start": "22:30", "end": "02:30", "intensity": 4 }
+      },
+      "quoi": "bars canal · vagues sortie",
+      "confidence": 0.60
+    },
+    {
+      "id": "quartier-latin",
+      "name": "Quartier Latin",
+      "arrondissements": ["5", "6"],
+      "corridor": "sud",
+      "tags": ["bars", "restos"],
+      "windows": {
+        "weeknight": { "start": "22:30", "end": "01:00", "intensity": 2 },
+        "weekend":   { "start": "22:30", "end": "02:00", "intensity": 3 }
+      },
+      "quoi": "étudiants + restos · retours SUD",
+      "confidence": 0.60
+    },
+    {
+      "id": "gare-du-nord",
+      "name": "Gare du Nord",
+      "arrondissements": ["10"],
+      "corridor": "nord",
+      "tags": ["gare"],
+      "windows": {
+        "weeknight": { "start": "21:00", "end": "00:30", "intensity": 4 },
+        "weekend":   { "start": "21:00", "end": "00:30", "intensity": 4 }
+      },
+      "quoi": "arrivées TGV/Thalys · flux NORD",
+      "confidence": 0.80
+    },
+    {
+      "id": "gare-de-lyon",
+      "name": "Gare de Lyon",
+      "arrondissements": ["12"],
+      "corridor": "est",
+      "tags": ["gare"],
+      "windows": {
+        "weeknight": { "start": "20:30", "end": "00:00", "intensity": 4 },
+        "weekend":   { "start": "20:30", "end": "00:00", "intensity": 4 }
+      },
+      "quoi": "arrivées TGV sud-est · flux gare Bercy",
+      "confidence": 0.80
+    },
+    {
+      "id": "montparnasse",
+      "name": "Montparnasse",
+      "arrondissements": ["14", "15"],
+      "corridor": "sud",
+      "tags": ["gare", "aeroport"],
+      "windows": {
+        "weeknight": { "start": "21:00", "end": "00:30", "intensity": 3 },
+        "weekend":   { "start": "21:00", "end": "00:30", "intensity": 3 }
+      },
+      "quoi": "TGV ouest + vols Orly · flux SUD",
+      "confidence": 0.75
+    },
+    {
+      "id": "saint-lazare",
+      "name": "Saint-Lazare",
+      "arrondissements": ["8"],
+      "corridor": "ouest",
+      "tags": ["gare", "bureau", "hotels"],
+      "windows": {
+        "weeknight": { "start": "20:00", "end": "22:30", "intensity": 3 },
+        "weekend":   { "start": "20:00", "end": "22:00", "intensity": 2 }
+      },
+      "quoi": "bureaux + hôtels VIII · retours OUEST",
+      "confidence": 0.65
+    },
+    {
+      "id": "gare-de-lest",
+      "name": "Gare de l'Est",
+      "arrondissements": ["10"],
+      "corridor": "nord",
+      "tags": ["gare"],
+      "windows": {
+        "weeknight": { "start": "21:00", "end": "23:30", "intensity": 3 },
+        "weekend":   { "start": "21:00", "end": "23:30", "intensity": 3 }
+      },
+      "quoi": "arrivées Est · flux avec Gare du Nord",
+      "confidence": 0.70
+    },
+    {
+      "id": "la-defense",
+      "name": "La Défense",
+      "arrondissements": [],
+      "corridor": "ouest",
+      "tags": ["bureau"],
+      "windows": {
+        "weeknight": { "start": "19:30", "end": "22:00", "intensity": 3 },
+        "weekend":   { "start": "20:00", "end": "22:00", "intensity": 1 }
+      },
+      "quoi": "bureaux Défense · retours OUEST",
+      "confidence": 0.60
+    }
+  ],
+  "corridorAnchors": {
+    "_note": "CDG and Orly are macro-magnets for long rides, not in the 15-zone list but corridor anchors",
+    "cdg": { "name": "CDG", "corridor": "nord", "quoi": "vols nuit/matin · courses longues NORD" },
+    "orly": { "name": "Orly", "corridor": "sud", "quoi": "vols nuit · courses longues SUD" }
+  }
+}

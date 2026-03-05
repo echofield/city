@@ -17,11 +17,32 @@ import { flowStateParamsSchema, parseQueryParams } from '@/lib/validation'
 import { cache, CACHE_KEYS, CACHE_TTL } from '@/lib/cache'
 import { compileLiveTonightPack } from '@/lib/city-signals/compileLive'
 import { storageFetchJson, isStorageConfigured } from '@/lib/supabase/storageFetchJson'
+import { buildFlowCard } from '@/lib/flow-engine/card-emitter'
 import type { TonightPack } from '@/lib/signal-fetchers/types'
 import { tonightPackToCitySignalsPack, isTonightPack } from '@/lib/city-signals/tonightPackAdapter'
 import type { FlowState, Ramification, DriverPosition } from '@/types/flow-state'
 import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
 import type { CompiledBrief } from '@/lib/prompts/contracts'
+import type { FlowCard } from '@/types/flow-card'
+
+/**
+ * FLOW v1.6 Response — card-first architecture
+ *
+ * card: FlowCard — the compressed living card (OÙ/QUAND/QUOI)
+ *       This is what READ mode renders. This is what WhatsApp sends.
+ *
+ * depth: FlowState — optional detailed state for RADAR mode
+ *        Only included when ?depth=1 or ?radar=1
+ */
+export interface FlowStateResponse {
+  card: FlowCard
+  depth?: FlowState
+  meta: {
+    source: string
+    stale: boolean
+    lastUpdate: string
+  }
+}
 
 /**
  * Returns honest degraded brief when no data available
@@ -263,6 +284,9 @@ export async function GET(request: Request) {
     })
   }
 
+  // Check if depth (radar mode) is requested
+  const includeDepth = searchParams.get('depth') === '1' || searchParams.get('radar') === '1'
+
   // Load city signals (cached, with live compilation fallback)
   const { pack, liveCompiled, source } = await getCachedCitySignals(nocache, recompile)
   // Use real compiled brief or honest empty state - NEVER mock data
@@ -275,47 +299,84 @@ export async function GET(request: Request) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ramifications: Ramification[] = (pack as any)?.ramifications ?? []
 
-  const input = {
-    brief_id: 'flow-brief',
-    now_block: {
-      zones: brief.now_block.zones,
-      rule: brief.now_block.rule,
-      confidence: brief.now_block.confidence,
-    },
-    driver: {
-      id: 'driver',
-      profile_variant: brief.meta.profile_variant,
-      current_zone: zone ?? brief.now_block.zones?.[0] ?? 'Châtelet',
-      shift_started_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-    },
-    signals: {
-      fleet_density: {},
-      surge_active: [],
-      events_ending_soon: [],
+  // ═══════════════════════════════════════════════════════════════════
+  // BUILD FLOW CARD — The primary artifact (v1.6 compression-first)
+  // ═══════════════════════════════════════════════════════════════════
+  const card = buildFlowCard(
+    brief,
+    ramifications,
+    null, // driver profile (TODO: load from session)
+    null, // previous card (TODO: load from session state)
+    0,    // shift revision count
+  )
+
+  // Check pack staleness (>6h since compilation)
+  const packCompiledAt = brief.meta.generated_at ? new Date(brief.meta.generated_at) : new Date()
+  const hoursSinceCompile = (Date.now() - packCompiledAt.getTime()) / (1000 * 60 * 60)
+  const isStale = hoursSinceCompile > 6
+
+  // Update card meta with staleness
+  if (isStale) {
+    card.meta.stale = true
+  }
+
+  // Build response — card is always included, depth is optional
+  const response: FlowStateResponse = {
+    card,
+    meta: {
+      source: pack ? source : 'empty-brief',
+      stale: isStale,
+      lastUpdate: brief.meta.generated_at ?? new Date().toISOString(),
     },
   }
 
-  const { move } = orchestrate(input)
-  const flowState = compiledBriefAndMoveToFlowState(brief, move, sessionStart, ramifications, weeklySkeleton, driverPosition)
-  flowState.templates = buildDayTemplates(pack)
+  // Only include depth payload if explicitly requested (for RADAR mode)
+  if (includeDepth) {
+    const input = {
+      brief_id: 'flow-brief',
+      now_block: {
+        zones: brief.now_block.zones,
+        rule: brief.now_block.rule,
+        confidence: brief.now_block.confidence,
+      },
+      driver: {
+        id: 'driver',
+        profile_variant: brief.meta.profile_variant,
+        current_zone: zone ?? brief.now_block.zones?.[0] ?? 'Châtelet',
+        shift_started_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+      },
+      signals: {
+        fleet_density: {},
+        surge_active: [],
+        events_ending_soon: [],
+      },
+    }
 
-  // Build structured action recommendations
-  const primaryAction = buildPrimaryAction(brief, ramifications, driverPosition)
-  if (primaryAction) {
-    flowState.primaryAction = primaryAction
-    flowState.alternativeActions = buildAlternatives(brief, primaryAction.zone, driverPosition)
-    flowState.driverContext = buildDriverContext(driverPosition, primaryAction.zone)
+    const { move } = orchestrate(input)
+    const flowState = compiledBriefAndMoveToFlowState(brief, move, sessionStart, ramifications, weeklySkeleton, driverPosition)
+    flowState.templates = buildDayTemplates(pack)
+
+    // Build structured action recommendations
+    const primaryAction = buildPrimaryAction(brief, ramifications, driverPosition)
+    if (primaryAction) {
+      flowState.primaryAction = primaryAction
+      flowState.alternativeActions = buildAlternatives(brief, primaryAction.zone, driverPosition)
+      flowState.driverContext = buildDriverContext(driverPosition, primaryAction.zone)
+    }
+    flowState.activeFrictions = buildActiveFrictions(brief, ramifications)
+
+    // Compute banlieue hub states from pack and ramifications
+    flowState.banlieueHubs = computeBanlieueHubs(pack, ramifications)
+
+    response.depth = flowState
   }
-  flowState.activeFrictions = buildActiveFrictions(brief, ramifications)
 
-  // Compute banlieue hub states from pack and ramifications
-  flowState.banlieueHubs = computeBanlieueHubs(pack, ramifications)
-
-  return NextResponse.json(flowState, {
+  return NextResponse.json(response, {
     headers: {
       'Cache-Control': 'no-store',
       'X-RateLimit-Remaining': String(rateLimit.remaining),
       'X-Flow-Source': pack ? source : 'empty-brief',
+      'X-Flow-Stale': isStale ? '1' : '0',
     },
   })
 }
