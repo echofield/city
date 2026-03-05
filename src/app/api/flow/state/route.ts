@@ -142,14 +142,16 @@ function getTonightDate(): string {
 }
 
 /** Get city signals with caching — PRIORITIZES live compilation when no tonight pack in storage */
-async function getCachedCitySignals(): Promise<{ pack: CitySignalsPackV1 | null; liveCompiled: boolean; source: string }> {
+async function getCachedCitySignals(skipCache = false): Promise<{ pack: CitySignalsPackV1 | null; liveCompiled: boolean; source: string }> {
   const tonightDate = getTonightDate()
   const cacheKey = CACHE_KEYS.citySignals(tonightDate)
 
-  // Check cache first
-  const cached = cache.get<CitySignalsPackV1>(cacheKey)
-  if (cached) {
-    return { pack: cached, liveCompiled: false, source: 'cache' }
+  // Check cache first (unless bypassed)
+  if (!skipCache) {
+    const cached = cache.get<CitySignalsPackV1>(cacheKey)
+    if (cached) {
+      return { pack: cached, liveCompiled: false, source: 'cache' }
+    }
   }
 
   // 1. Try tonight pack from Supabase Storage directly
@@ -226,6 +228,7 @@ export async function GET(request: Request) {
   }
 
   const { lat, lng, sessionStart, zone, mock } = validation.data
+  const nocache = searchParams.get('nocache') === '1'
 
   // Build driver position if coordinates provided
   let driverPosition: DriverPosition | undefined
@@ -245,7 +248,7 @@ export async function GET(request: Request) {
   }
 
   // Load city signals (cached, with live compilation fallback)
-  const { pack, liveCompiled, source } = await getCachedCitySignals()
+  const { pack, liveCompiled, source } = await getCachedCitySignals(nocache)
   // Use real compiled brief or honest empty state - NEVER mock data
   const brief = pack ? compiledFromCitySignalsPackV1(pack) : createEmptyBrief()
 
