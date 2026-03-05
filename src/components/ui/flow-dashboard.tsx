@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Navigation, Radar, X, HelpCircle } from 'lucide-react'
 import type { ActionType } from '@/lib/flow-engine/driver-anchor'
@@ -8,10 +8,20 @@ import type { ShiftPhase, CorridorStatus } from '@/types/flow-view-model'
 import type { SignalCertainty, PisteCategory } from '@/lib/flow-vocabulary'
 
 // ════════════════════════════════════════════════════════════════
+// META TECHNIQUE CONSTANTS
+// ════════════════════════════════════════════════════════════════
+
+// THE NEEDLE — 120ms base transition
+const NEEDLE = { duration: 0.12 }
+const STAGGER_1 = { duration: 0.15, delay: 0.04 }
+const STAGGER_2 = { duration: 0.15, delay: 0.08 }
+
+// ════════════════════════════════════════════════════════════════
 // TYPES
 // ════════════════════════════════════════════════════════════════
 
 export type ViewMode = 'read' | 'radar'
+export type RideProfile = 'longues' | 'mixte' | 'courtes'
 
 export interface FlowStats {
   eta: number // minutes
@@ -55,6 +65,20 @@ export interface ProchainePiste {
   category: PisteCategory
 }
 
+/**
+ * PICS CE SOIR — tonight's peak timeline
+ * Chronological quest chain sorted by windowStart
+ */
+export interface TonightPeak {
+  id: string
+  zone: string
+  action: ActionType
+  windowStart: string // "22:30"
+  windowEnd: string // "23:15"
+  cause: string
+  rideProfile?: RideProfile
+}
+
 export interface FlowDashboardProps {
   // Core action
   action: ActionType
@@ -69,6 +93,7 @@ export interface FlowDashboardProps {
 
   // Position
   distanceKm?: number
+  distanceM?: number // meters — more precise
   etaMin?: number
   entrySide?: string // "côte Gare du Nord"
 
@@ -90,6 +115,12 @@ export interface FlowDashboardProps {
   confidence?: number
   eurEstimate?: { low: number; high: number }
 
+  // Confidence label — vocabulary v3.0
+  confidenceLabel?: string // "Ça se forme", "Bonne fenêtre", etc.
+
+  // Ride profile — L/M/C
+  rideProfile?: RideProfile
+
   // Corridor statuses
   corridorStatuses?: CorridorStatus[]
 
@@ -98,6 +129,14 @@ export interface FlowDashboardProps {
 
   // Next lead in the quest chain
   prochainePiste?: ProchainePiste
+
+  // PICS CE SOIR — tonight's peaks timeline
+  tonightPeaks?: TonightPeak[]
+
+  // CONFIRME flow — session state locking
+  isConfirmed?: boolean
+  onConfirm?: () => void
+  onUnconfirm?: () => void
 
   // Callbacks
   onNavigate?: () => void
@@ -165,6 +204,13 @@ const PISTE_LABELS: Record<PisteCategory, string> = {
   soiree: 'Piste soirée',
 }
 
+// Ride profile labels — L/M/C compact badges
+const RIDE_PROFILE_LABELS: Record<RideProfile, string> = {
+  longues: 'L',
+  mixte: 'M',
+  courtes: 'C',
+}
+
 // ════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ════════════════════════════════════════════════════════════════
@@ -172,6 +218,26 @@ const PISTE_LABELS: Record<PisteCategory, string> = {
 export function FlowDashboard(props: FlowDashboardProps) {
   const [mode, setMode] = useState<ViewMode>('read')
   const [countdown, setCountdown] = useState(props.secondsLeft || 0)
+
+  // ═══════════════════════════════════════════════════════════
+  // THE BREATH — Global sine wave at 60fps
+  // Everything alive breathes together
+  // ═══════════════════════════════════════════════════════════
+  const [breathPhase, setBreathPhase] = useState(0.5)
+  const animRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    let t = 0
+    const tick = () => {
+      t += 0.015 // ~4 second full cycle
+      setBreathPhase(Math.sin(t) * 0.5 + 0.5) // 0 → 1 → 0
+      animRef.current = requestAnimationFrame(tick)
+    }
+    animRef.current = requestAnimationFrame(tick)
+    return () => {
+      if (animRef.current) cancelAnimationFrame(animRef.current)
+    }
+  }, [])
 
   // Countdown timer
   useEffect(() => {
@@ -226,6 +292,7 @@ export function FlowDashboard(props: FlowDashboardProps) {
             styles={styles}
             countdown={countdown}
             formatTime={formatTime}
+            breathPhase={breathPhase}
             onNavigate={handleNavigate}
             onOpenRadar={() => setMode('radar')}
           />
@@ -236,6 +303,7 @@ export function FlowDashboard(props: FlowDashboardProps) {
             styles={styles}
             countdown={countdown}
             formatTime={formatTime}
+            breathPhase={breathPhase}
             onNavigate={handleNavigate}
             onClose={() => setMode('read')}
           />
@@ -253,6 +321,7 @@ interface ReadModeProps extends FlowDashboardProps {
   styles: { text: string; border: string; bg: string }
   countdown: number
   formatTime: (s: number) => string
+  breathPhase: number
   onNavigate: () => void
   onOpenRadar: () => void
 }
@@ -270,9 +339,15 @@ function ReadMode({
   corridor,
   confidence,
   eurEstimate,
+  confidenceLabel,
+  rideProfile,
+  isConfirmed,
+  onConfirm,
+  onUnconfirm,
   styles,
   countdown,
   formatTime,
+  breathPhase,
   onNavigate,
   onOpenRadar,
 }: ReadModeProps) {
@@ -281,16 +356,30 @@ function ReadMode({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="min-h-screen flex flex-col"
+      transition={NEEDLE}
+      className="min-h-screen flex flex-col relative"
     >
       {/* Top bar */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={STAGGER_1}
+        className="flex items-center justify-between px-4 py-3 border-b border-border-subtle"
+      >
         <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${
-            currentPhase === 'pic' ? 'bg-signal animate-pulse' :
-            currentPhase === 'montee' ? 'bg-intent' :
-            'bg-text-ghost'
-          }`} />
+          {/* PHASE DOT — only pulses during "pic" */}
+          <motion.span
+            className={`w-2 h-2 rounded-full ${
+              currentPhase === 'pic' ? 'bg-signal' :
+              currentPhase === 'montee' ? 'bg-intent' :
+              'bg-text-ghost'
+            }`}
+            animate={currentPhase === 'pic' ? {
+              scale: [1, 1.4, 1],
+              opacity: [0.6, 1, 0.6],
+            } : {}}
+            transition={{ duration: 2, repeat: Infinity }}
+          />
           <span className="text-xs text-text-ghost uppercase tracking-wider">
             {currentPhase ? PHASE_LABELS[currentPhase] : 'CALME'}
           </span>
@@ -300,8 +389,21 @@ function ReadMode({
               <span className="text-xs text-text-ghost uppercase">{corridor}</span>
             </>
           )}
+          {/* Confidence label — "Ça se forme", etc. */}
+          {confidenceLabel && (
+            <>
+              <span className="text-text-ghost/30">/</span>
+              <span className="text-xs text-intent">{confidenceLabel}</span>
+            </>
+          )}
         </div>
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-3 text-sm">
+          {/* L/M/C badge */}
+          {rideProfile && (
+            <span className="text-xs text-text-ghost border border-text-ghost/30 rounded px-1.5 py-0.5">
+              {RIDE_PROFILE_LABELS[rideProfile]}
+            </span>
+          )}
           {confidence !== undefined && (
             <span className="text-text-ghost">{Math.round(confidence * 100)}%</span>
           )}
@@ -311,7 +413,7 @@ function ReadMode({
             </span>
           )}
         </div>
-      </div>
+      </motion.div>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col items-center justify-center px-6">
@@ -320,6 +422,7 @@ function ReadMode({
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
+            transition={STAGGER_1}
             className="mb-6 text-center"
           >
             <p className="text-xs text-text-ghost uppercase tracking-wider mb-2">
@@ -337,6 +440,7 @@ function ReadMode({
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
+          transition={NEEDLE}
           className={`border-l-4 ${styles.border} pl-6 mb-4`}
         >
           <p
@@ -351,7 +455,7 @@ function ReadMode({
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.1 }}
+          transition={STAGGER_1}
           className="flex items-baseline gap-3 mb-4"
         >
           <p className="text-3xl md:text-4xl text-text-primary font-light tracking-wide">
@@ -368,39 +472,72 @@ function ReadMode({
         <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
+          transition={STAGGER_2}
           className="text-sm text-text-ghost text-center max-w-sm"
         >
           {cause}
         </motion.p>
+
+        {/* CONFIRME button */}
+        {onConfirm && (
+          <motion.button
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={STAGGER_2}
+            onClick={isConfirmed ? onUnconfirm : onConfirm}
+            whileTap={{ scale: 0.97 }}
+            className={`mt-6 px-6 py-2 rounded-lg border text-sm uppercase tracking-wider transition-colors ${
+              isConfirmed
+                ? 'border-signal text-signal bg-signal/5'
+                : 'border-text-ghost/30 text-text-ghost hover:border-text-ghost/50'
+            }`}
+          >
+            {isConfirmed ? 'CONFIRMÉ' : 'CONFIRME'}
+          </motion.button>
+        )}
       </div>
 
       {/* Stats footer */}
       {stats && (
-        <div className="grid grid-cols-4 gap-px bg-border-subtle mx-4 rounded-lg overflow-hidden">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={STAGGER_2}
+          className="grid grid-cols-4 gap-px bg-border-subtle mx-4 rounded-lg overflow-hidden"
+        >
           <StatBox label="ETA" value={`${stats.eta}`} unit="min" />
           <StatBox label="SATURATION" value={`${stats.saturation}`} unit="%" color="green" />
           <StatBox label="OPPORTUNITÉ" value={`${stats.opportunite}`} unit="%" color="amber" />
           <StatBox label="EUR/H" value={`${stats.eurH.low}-${stats.eurH.high}`} color="signal" />
-        </div>
+        </motion.div>
       )}
 
       {/* Friction & Prochain */}
       <div className="px-4 py-3 space-y-2 text-sm">
         {friction && (
-          <div className="flex items-center gap-3">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={STAGGER_1}
+            className="flex items-center gap-3"
+          >
             <span className="text-intent text-xs uppercase tracking-wider w-16">FRICTION</span>
             <span className="text-text-secondary">{friction.label}</span>
             <span className="text-signal text-xs ml-auto">{friction.implication}</span>
-          </div>
+          </motion.div>
         )}
         {prochain && (
-          <div className="flex items-center gap-3">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={STAGGER_2}
+            className="flex items-center gap-3"
+          >
             <span className="text-signal text-xs uppercase tracking-wider w-16">PROCHAIN</span>
             <span className="text-text-ghost font-mono">{prochain.time}</span>
             <span className="text-text-secondary">{prochain.zone}</span>
             <span className="text-text-ghost text-xs">{prochain.type}</span>
-          </div>
+          </motion.div>
         )}
       </div>
 
@@ -414,6 +551,12 @@ function ReadMode({
           <HelpCircle className="w-4 h-4" />
         </button>
       </div>
+
+      {/* THE BREATH — breathing line at bottom */}
+      <div
+        className="absolute bottom-0 left-0 right-0 h-0.5 bg-signal"
+        style={{ opacity: 0.1 + breathPhase * 0.25 }}
+      />
     </motion.div>
   )
 }
@@ -426,6 +569,7 @@ interface RadarModeProps extends FlowDashboardProps {
   styles: { text: string; border: string; bg: string }
   countdown: number
   formatTime: (s: number) => string
+  breathPhase: number
   onNavigate: () => void
   onClose: () => void
 }
@@ -438,6 +582,7 @@ function RadarMode({
   windowLabel,
   windowRange,
   distanceKm,
+  distanceM,
   etaMin,
   entrySide,
   opp,
@@ -447,30 +592,52 @@ function RadarMode({
   eurEstimate,
   signals,
   prochainePiste,
+  tonightPeaks,
   currentPhase,
   corridor,
   confidence,
+  confidenceLabel,
+  rideProfile,
   corridorStatuses,
   mapComponent,
+  isConfirmed,
+  onConfirm,
+  onUnconfirm,
   styles,
   countdown,
   formatTime,
+  breathPhase,
   onNavigate,
   onClose,
   onDispatch,
   onEndShift,
 }: RadarModeProps) {
+  // Format distance — prefer meters if available
+  const distanceDisplay = distanceM !== undefined
+    ? distanceM >= 1000
+      ? `${(distanceM / 1000).toFixed(1)} km`
+      : `${distanceM} m`
+    : distanceKm !== undefined
+      ? `${distanceKm} km`
+      : null
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      transition={NEEDLE}
       className="min-h-screen flex"
     >
       {/* Left: Map */}
       <div className="flex-1 relative">
         {/* Top bar */}
-        <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-3">
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={STAGGER_1}
+          className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-3"
+        >
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
@@ -479,11 +646,19 @@ function RadarMode({
               READ
             </button>
             <div className="flex items-center gap-2 px-3 py-1.5 rounded border border-border">
-              <span className={`w-2 h-2 rounded-full ${
-                currentPhase === 'pic' ? 'bg-signal' :
-                currentPhase === 'montee' ? 'bg-intent' :
-                'bg-text-ghost'
-              }`} />
+              {/* PHASE DOT — only pulses during "pic" */}
+              <motion.span
+                className={`w-2 h-2 rounded-full ${
+                  currentPhase === 'pic' ? 'bg-signal' :
+                  currentPhase === 'montee' ? 'bg-intent' :
+                  'bg-text-ghost'
+                }`}
+                animate={currentPhase === 'pic' ? {
+                  scale: [1, 1.4, 1],
+                  opacity: [0.6, 1, 0.6],
+                } : {}}
+                transition={{ duration: 2, repeat: Infinity }}
+              />
               <span className="text-xs text-text-ghost uppercase">
                 {currentPhase ? PHASE_LABELS[currentPhase] : 'CALME'}
               </span>
@@ -505,7 +680,7 @@ function RadarMode({
               </span>
             )}
           </div>
-        </div>
+        </motion.div>
 
         {/* Map area */}
         <div className="absolute inset-0 flex items-center justify-center">
@@ -516,14 +691,27 @@ function RadarMode({
       </div>
 
       {/* Right: Panel */}
-      <div className="w-96 bg-void border-l border-border-subtle flex flex-col">
+      <div className="w-96 bg-void border-l border-border-subtle flex flex-col relative">
         {/* Timer section */}
-        <div className="p-6 border-b border-border-subtle">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={NEEDLE}
+          className="p-6 border-b border-border-subtle"
+        >
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${
-                currentPhase === 'pic' ? 'bg-signal animate-pulse' : 'bg-intent'
-              }`} />
+              {/* PHASE DOT — only pulses during "pic" */}
+              <motion.span
+                className={`w-2 h-2 rounded-full ${
+                  currentPhase === 'pic' ? 'bg-signal' : 'bg-intent'
+                }`}
+                animate={currentPhase === 'pic' ? {
+                  scale: [1, 1.4, 1],
+                  opacity: [0.6, 1, 0.6],
+                } : {}}
+                transition={{ duration: 2, repeat: Infinity }}
+              />
               <span className="text-xs text-intent uppercase tracking-wider">
                 {windowLabel || 'FENÊTRE EN FORMATION'}
               </span>
@@ -535,8 +723,18 @@ function RadarMode({
             </span>
           </div>
 
+          {/* Confidence label */}
+          {confidenceLabel && (
+            <p className="text-xs text-intent mb-3">{confidenceLabel}</p>
+          )}
+
           {/* Action */}
-          <div className={`border-l-4 ${styles.border} pl-4 mb-4`}>
+          <motion.div
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={STAGGER_1}
+            className={`border-l-4 ${styles.border} pl-4 mb-4`}
+          >
             <p
               className={`text-4xl font-light tracking-wide ${styles.text}`}
               style={{ fontFamily: 'var(--font-serif, Georgia, serif)' }}
@@ -545,7 +743,7 @@ function RadarMode({
                 <span key={i} className="block">{word}</span>
               ))}
             </p>
-          </div>
+          </motion.div>
 
           {/* Zone info */}
           <div className="flex items-baseline gap-2 mb-2">
@@ -555,13 +753,19 @@ function RadarMode({
             {arrondissement && (
               <span className="text-sm text-text-ghost">{arrondissement}</span>
             )}
+            {/* L/M/C badge */}
+            {rideProfile && (
+              <span className="text-xs text-text-ghost border border-text-ghost/30 rounded px-1.5 py-0.5 ml-2">
+                {RIDE_PROFILE_LABELS[rideProfile]}
+              </span>
+            )}
           </div>
 
           {/* Distance & ETA */}
-          {(distanceKm !== undefined || etaMin !== undefined) && (
+          {(distanceDisplay || etaMin !== undefined) && (
             <div className="flex items-center gap-4 text-sm text-text-ghost mb-2">
-              {distanceKm !== undefined && <span>{distanceKm} km</span>}
-              {distanceKm !== undefined && etaMin !== undefined && <span>|</span>}
+              {distanceDisplay && <span>{distanceDisplay}</span>}
+              {distanceDisplay && etaMin !== undefined && <span>|</span>}
               {etaMin !== undefined && <span>{etaMin} min</span>}
             </div>
           )}
@@ -584,15 +788,35 @@ function RadarMode({
 
           {/* OPP / FRIC / COST boxes */}
           {(opp !== undefined || fric !== undefined || cost !== undefined) && (
-            <div className="grid grid-cols-3 gap-2 mb-4">
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={STAGGER_1}
+              className="grid grid-cols-3 gap-2 mb-4"
+            >
               <ScoreBox label="OPP" value={opp ?? 0} color="signal" />
               <ScoreBox label="FRIC" value={fric ?? 0} color="intent" />
               <ScoreBox label="COST" value={cost ?? 0} color="alert" />
-            </div>
+            </motion.div>
           )}
 
           {/* Cause */}
           <p className="text-sm text-text-ghost mb-4">{cause}</p>
+
+          {/* CONFIRME button */}
+          {onConfirm && (
+            <motion.button
+              onClick={isConfirmed ? onUnconfirm : onConfirm}
+              whileTap={{ scale: 0.97 }}
+              className={`w-full py-3 mb-3 rounded-lg border text-sm uppercase tracking-wider transition-colors ${
+                isConfirmed
+                  ? 'border-signal text-signal bg-signal/5'
+                  : 'border-text-ghost/30 text-text-ghost hover:border-text-ghost/50'
+              }`}
+            >
+              {isConfirmed ? 'CONFIRMÉ' : 'CONFIRME'}
+            </motion.button>
+          )}
 
           {/* Navigate button */}
           <button
@@ -602,11 +826,63 @@ function RadarMode({
             <span className="uppercase tracking-wider">NAVIGUER</span>
             <span>→</span>
           </button>
-        </div>
+        </motion.div>
+
+        {/* PICS CE SOIR — tonight's peaks timeline */}
+        {tonightPeaks && tonightPeaks.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={STAGGER_2}
+            className="px-6 py-4 border-b border-border-subtle"
+          >
+            <p className="text-xs text-text-ghost uppercase tracking-wider mb-3">PICS CE SOIR</p>
+            <div className="space-y-3">
+              {tonightPeaks.map((peak, index) => (
+                <div key={peak.id} className="flex items-start gap-3">
+                  {/* Timeline dot & connector */}
+                  <div className="flex flex-col items-center">
+                    <span className={`w-2 h-2 rounded-full ${
+                      index === 0 ? 'bg-signal' : 'bg-text-ghost/50'
+                    }`} />
+                    {index < tonightPeaks.length - 1 && (
+                      <div className="w-px h-8 bg-border-subtle mt-1" />
+                    )}
+                  </div>
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs uppercase tracking-wider ${
+                        ACTION_STYLES[peak.action]?.text || 'text-text-ghost'
+                      }`}>
+                        {ACTION_LABELS[peak.action]}
+                      </span>
+                      <span className="text-sm text-text-primary">{peak.zone}</span>
+                      {peak.rideProfile && (
+                        <span className="text-[10px] text-text-ghost border border-text-ghost/30 rounded px-1">
+                          {RIDE_PROFILE_LABELS[peak.rideProfile]}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-text-ghost">
+                      <span className="font-mono">{peak.windowStart}-{peak.windowEnd}</span>
+                      <span className="truncate">{peak.cause}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
 
         {/* Friction section */}
         {friction && (
-          <div className="px-6 py-4 border-b border-border-subtle">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={STAGGER_1}
+            className="px-6 py-4 border-b border-border-subtle"
+          >
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-xs text-text-ghost uppercase tracking-wider">FRICTION</span>
@@ -614,7 +890,7 @@ function RadarMode({
               </div>
               <span className="text-xs text-signal">{friction.implication}</span>
             </div>
-          </div>
+          </motion.div>
         )}
 
         {/* EUR/h estimate */}
@@ -631,7 +907,12 @@ function RadarMode({
 
         {/* Prochaine piste — quest chain */}
         {prochainePiste && (
-          <div className="px-6 py-4 border-b border-border-subtle bg-amber-400/5">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={STAGGER_2}
+            className="px-6 py-4 border-b border-border-subtle bg-amber-400/5"
+          >
             <div className="flex items-center gap-2 mb-2">
               <span className="text-[10px] text-amber-400/70 uppercase tracking-wider border border-amber-400/30 rounded px-1">
                 {PISTE_LABELS[prochainePiste.category]}
@@ -645,7 +926,7 @@ function RadarMode({
               </div>
               <span className="text-sm text-amber-400/70 font-mono">{prochainePiste.time}</span>
             </div>
-          </div>
+          </motion.div>
         )}
 
         {/* Signals list — confirmed vs piste */}
@@ -654,7 +935,13 @@ function RadarMode({
             {signals.map((sig, i) => {
               const isPiste = sig.certainty === 'piste'
               return (
-                <div key={i} className={`flex items-center gap-2 ${isPiste ? 'opacity-75' : ''}`}>
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, x: -4 }}
+                  animate={{ opacity: isPiste ? 0.75 : 1, x: 0 }}
+                  transition={{ ...STAGGER_1, delay: 0.04 * i }}
+                  className="flex items-center gap-2"
+                >
                   {/* Piste indicator */}
                   {isPiste && sig.pisteCategory && (
                     <span className="text-[10px] text-amber-400/70 uppercase tracking-wider border border-amber-400/30 rounded px-1">
@@ -675,7 +962,7 @@ function RadarMode({
                   }`}>
                     {sig.label}
                   </span>
-                </div>
+                </motion.div>
               )
             })}
           </div>
@@ -683,7 +970,7 @@ function RadarMode({
 
         {/* Shift Arc */}
         <div className="px-6 py-4 mt-auto">
-          <ShiftArcMini currentPhase={currentPhase} />
+          <ShiftArcMini currentPhase={currentPhase} breathPhase={breathPhase} />
         </div>
 
         {/* Bottom buttons */}
@@ -701,6 +988,12 @@ function RadarMode({
             FIN SHIFT
           </button>
         </div>
+
+        {/* THE BREATH — breathing line at bottom */}
+        <div
+          className="absolute bottom-0 left-0 right-0 h-0.5 bg-signal"
+          style={{ opacity: 0.1 + breathPhase * 0.25 }}
+        />
       </div>
     </motion.div>
   )
@@ -761,7 +1054,7 @@ function ScoreBox({
   )
 }
 
-function ShiftArcMini({ currentPhase }: { currentPhase?: ShiftPhase }) {
+function ShiftArcMini({ currentPhase, breathPhase }: { currentPhase?: ShiftPhase; breathPhase: number }) {
   const phases: ShiftPhase[] = ['calme', 'montee', 'pic', 'dispersion']
   const currentIndex = currentPhase ? phases.indexOf(currentPhase) : 0
 
@@ -774,15 +1067,19 @@ function ShiftArcMini({ currentPhase }: { currentPhase?: ShiftPhase }) {
         return (
           <div key={phase} className="flex items-center">
             <div className="flex flex-col items-center">
-              <span className={`w-2 h-2 rounded-full mb-1 ${
-                isActive ? (
-                  phase === 'pic' ? 'bg-signal' :
-                  phase === 'montee' ? 'bg-intent' :
-                  'bg-text-ghost'
-                ) :
-                isPast ? 'bg-text-ghost/50' :
-                'bg-border'
-              }`} />
+              {/* THE BREATH — active dot breathes */}
+              <span
+                className={`w-2 h-2 rounded-full mb-1 transition-opacity ${
+                  isActive ? (
+                    phase === 'pic' ? 'bg-signal' :
+                    phase === 'montee' ? 'bg-intent' :
+                    'bg-text-ghost'
+                  ) :
+                  isPast ? 'bg-text-ghost/50' :
+                  'bg-border'
+                }`}
+                style={isActive ? { opacity: 0.7 + breathPhase * 0.3 } : undefined}
+              />
               <span className={`text-xs uppercase tracking-wider ${
                 isActive ? 'text-text-secondary' : 'text-text-ghost/50'
               }`}>
