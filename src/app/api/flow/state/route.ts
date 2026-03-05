@@ -142,15 +142,30 @@ function getTonightDate(): string {
 }
 
 /** Get city signals with caching — PRIORITIZES live compilation when no tonight pack in storage */
-async function getCachedCitySignals(skipCache = false): Promise<{ pack: CitySignalsPackV1 | null; liveCompiled: boolean; source: string }> {
+async function getCachedCitySignals(skipCache = false, forceRecompile = false): Promise<{ pack: CitySignalsPackV1 | null; liveCompiled: boolean; source: string }> {
   const tonightDate = getTonightDate()
   const cacheKey = CACHE_KEYS.citySignals(tonightDate)
 
   // Check cache first (unless bypassed)
-  if (!skipCache) {
+  if (!skipCache && !forceRecompile) {
     const cached = cache.get<CitySignalsPackV1>(cacheKey)
     if (cached) {
       return { pack: cached, liveCompiled: false, source: 'cache' }
+    }
+  }
+
+  // Force recompile: skip storage check and go straight to live compilation
+  if (forceRecompile) {
+    console.log('[flow/state] Force recompile requested — compiling live...')
+    try {
+      const livePack = await compileLiveTonightPack()
+      if (livePack) {
+        const normalized = normalizeCitySignalsPack(livePack)
+        cache.set(cacheKey, normalized, Math.min(CACHE_TTL.citySignals, 300))
+        return { pack: normalized, liveCompiled: true, source: 'live-recompiled' }
+      }
+    } catch (err) {
+      console.error('[flow/state] Force recompile failed:', err)
     }
   }
 
@@ -229,6 +244,7 @@ export async function GET(request: Request) {
 
   const { lat, lng, sessionStart, zone, mock } = validation.data
   const nocache = searchParams.get('nocache') === '1'
+  const recompile = searchParams.get('recompile') === '1'
 
   // Build driver position if coordinates provided
   let driverPosition: DriverPosition | undefined
@@ -248,7 +264,7 @@ export async function GET(request: Request) {
   }
 
   // Load city signals (cached, with live compilation fallback)
-  const { pack, liveCompiled, source } = await getCachedCitySignals(nocache)
+  const { pack, liveCompiled, source } = await getCachedCitySignals(nocache, recompile)
   // Use real compiled brief or honest empty state - NEVER mock data
   const brief = pack ? compiledFromCitySignalsPackV1(pack) : createEmptyBrief()
 
