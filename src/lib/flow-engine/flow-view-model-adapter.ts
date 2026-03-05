@@ -1,8 +1,11 @@
 /**
- * FlowViewModel Adapter — v1.6
+ * FlowViewModel Adapter — v1.7
  *
- * Transforms TonightPack into FlowViewModel with full sourceRefs traceability.
- * Every UI element links back to the real signals that generated it.
+ * Transforms TonightPack into FlowViewModel using the Corridor Pressure Engine.
+ * Every UI element shows CAUSE → CONSEQUENCE → ACTION with sourceRefs.
+ *
+ * Pipeline:
+ * signals → pressure engine → corridor flow → zoneHeat → recommended positioning
  */
 
 import type {
@@ -36,6 +39,17 @@ import type {
 import { BANLIEUE_MAGNETS_STATIC } from '@/types/flow-view-model'
 import { TERRITORY_IDS } from './flow-state-adapter'
 
+import {
+  computeCorridorPressure,
+  buildFullRamifications,
+  estimateMagnitude,
+  ZONE_ARRONDISSEMENT,
+  CORRIDOR_GRAPH,
+  type PressureSignal,
+  type FullRamification,
+  type MagnitudeRange,
+} from './corridor-pressure'
+
 // ════════════════════════════════════════════════════════════════
 // HELPERS
 // ════════════════════════════════════════════════════════════════
@@ -59,12 +73,6 @@ function secondsUntil(iso: string): number {
   const target = new Date(iso).getTime()
   const now = Date.now()
   return Math.max(0, Math.round((target - now) / 1000))
-}
-
-function confidenceToLevel(c: number): 'high' | 'medium' | 'low' {
-  if (c >= 0.7) return 'high'
-  if (c >= 0.4) return 'medium'
-  return 'low'
 }
 
 /** Create a sourceRef from an event signal */
@@ -118,6 +126,110 @@ function skeletonToSourceRef(s: WeeklyWindow): SourceRef {
 }
 
 // ════════════════════════════════════════════════════════════════
+// SIGNAL CONVERSION — TonightPack signals → PressureSignals
+// ════════════════════════════════════════════════════════════════
+
+function convertToPressureSignals(pack: TonightPack): PressureSignal[] {
+  const signals: PressureSignal[] = []
+  const now = Date.now()
+
+  // Convert events
+  const events = pack.signals.filter((s): s is EventSignal => s.type === 'event')
+  for (const event of events) {
+    const exitStart = new Date(event.exitWindow.start)
+    const minutesToExit = (exitStart.getTime() - now) / 60000
+
+    // Only include events within relevant window (-30 to +120 min)
+    if (minutesToExit > -30 && minutesToExit < 120) {
+      const magnitude = estimateMagnitude(event.title, event.estimatedAttendance)
+      signals.push({
+        id: event.id,
+        type: 'event',
+        zone: event.zone,
+        corridor: event.corridor,
+        magnitude,
+        confidence: event.confidence,
+        window: event.exitWindow,
+        cause: `Sortie ${event.venue} — ${event.title}`,
+      })
+    }
+  }
+
+  // Convert transport disruptions
+  const transport = pack.signals.filter((s): s is TransportSignal => s.type === 'transport')
+  for (const t of transport) {
+    if (t.status === 'disrupted' || t.status === 'closed') {
+      signals.push({
+        id: `transport-${t.line}`,
+        type: 'transport',
+        zone: t.affectedZones[0] || 'Châtelet',
+        corridor: t.corridor === 'unknown' ? 'centre' : t.corridor,
+        magnitude: { low: 500, high: 2000, label: 'demande supplémentaire' },
+        confidence: t.confidence,
+        window: { start: t.since, end: t.estimatedResolution || new Date(now + 4 * 60 * 60 * 1000).toISOString() },
+        cause: `${t.line} ${t.status === 'closed' ? 'fermé' : 'perturbé'} — pression VTC`,
+      })
+    }
+  }
+
+  // Convert weather
+  const weather = pack.signals.find((s): s is WeatherSignal => s.type === 'weather')
+  if (weather && (weather.impact === 'fragmented' || weather.rainProbability > 0.5)) {
+    signals.push({
+      id: `weather-${weather.compiledAt}`,
+      type: 'weather',
+      zone: 'Châtelet', // Weather affects center primarily
+      corridor: 'centre',
+      magnitude: { low: 0, high: 0, label: `+${Math.round(weather.rainProbability * 30)}% demande` },
+      confidence: weather.confidence,
+      window: { start: weather.compiledAt, end: new Date(now + 4 * 60 * 60 * 1000).toISOString() },
+      cause: weather.condition === 'rain' || weather.condition === 'heavy_rain'
+        ? 'Pluie — demande fragmentée'
+        : `Météo ${weather.condition}`,
+    })
+  }
+
+  // Convert skeleton windows (active today)
+  const parisTime = getParisTime()
+  const dayOfWeek = parisTime.getDay()
+  const currentTimeStr = parisTime.toTimeString().slice(0, 5)
+
+  for (const skel of pack.weeklySkeleton) {
+    const days = Array.isArray(skel.dayOfWeek) ? skel.dayOfWeek : [skel.dayOfWeek]
+    if (!days.includes(dayOfWeek)) continue
+
+    // Include if currently active or starting within 2 hours
+    const skelStart = skel.window.start
+    const isActive = currentTimeStr >= skel.window.start && currentTimeStr <= skel.window.end
+    const minutesToStart = (new Date(`${pack.date}T${skelStart}:00`).getTime() - now) / 60000
+    const isUpcoming = minutesToStart > 0 && minutesToStart < 120
+
+    if (isActive || isUpcoming) {
+      const intensity = skel.intensity || 3
+      signals.push({
+        id: skel.id,
+        type: 'skeleton',
+        zone: skel.zones[0] || 'Châtelet',
+        corridor: skel.corridors[0] || 'centre',
+        magnitude: {
+          low: intensity * 300,
+          high: intensity * 800,
+          label: 'flux récurrent',
+        },
+        confidence: skel.confidence,
+        window: {
+          start: new Date(`${pack.date}T${skel.window.start}:00`).toISOString(),
+          end: new Date(`${pack.date}T${skel.window.end}:00`).toISOString(),
+        },
+        cause: skel.description,
+      })
+    }
+  }
+
+  return signals
+}
+
+// ════════════════════════════════════════════════════════════════
 // META BUILDER
 // ════════════════════════════════════════════════════════════════
 
@@ -143,96 +255,68 @@ function buildMeta(pack: TonightPack, source: string): FlowViewMeta {
 }
 
 // ════════════════════════════════════════════════════════════════
-// ACTION BUILDER
+// ACTION BUILDER — Uses pressure engine
 // ════════════════════════════════════════════════════════════════
 
-function buildAction(pack: TonightPack, driverPosition?: { lat: number; lng: number }): FlowViewAction {
-  const now = getParisTime()
-  const currentHour = now.getHours()
+function buildAction(
+  pack: TonightPack,
+  fullRamifications: FullRamification[],
+  topZone: string,
+  topCorridor: CorridorDirection | null,
+  dominantFlow: string
+): FlowViewAction {
+  const now = Date.now()
 
-  // Find the most imminent high-confidence ramification
-  const activeRamifications = pack.ramifications
-    .filter(r => {
-      const start = new Date(r.window.start)
-      const end = new Date(r.window.end)
-      const nowTs = Date.now()
-      // Active or starting within 30 minutes
-      return (nowTs >= start.getTime() && nowTs <= end.getTime()) ||
-             (start.getTime() - nowTs <= 30 * 60 * 1000 && start.getTime() > nowTs)
+  // Find the highest-priority ramification (soonest + highest confidence)
+  const activeRams = fullRamifications
+    .filter(r => r.window.minutesUntil < 60) // Within 1 hour
+    .sort((a, b) => {
+      // Prioritize: active > soon > later, then by confidence
+      if (a.window.minutesUntil <= 0 && b.window.minutesUntil > 0) return -1
+      if (b.window.minutesUntil <= 0 && a.window.minutesUntil > 0) return 1
+      return b.confidence - a.confidence
     })
-    .sort((a, b) => b.confidence - a.confidence)
 
-  // Find active skeleton windows
-  const dayOfWeek = now.getDay()
-  const currentTimeStr = now.toTimeString().slice(0, 5) // HH:MM
-  const activeSkeletons = pack.weeklySkeleton.filter(s => {
-    const days = Array.isArray(s.dayOfWeek) ? s.dayOfWeek : [s.dayOfWeek]
-    if (!days.includes(dayOfWeek)) return false
-    return currentTimeStr >= s.window.start && currentTimeStr <= s.window.end
-  })
+  const primaryRam = activeRams[0]
 
-  // Find relevant events (ending soon)
-  const events = pack.signals.filter((s): s is EventSignal => s.type === 'event')
-  const upcomingEvents = events.filter(e => {
-    const exitStart = new Date(e.exitWindow.start)
-    const minutesToExit = (exitStart.getTime() - Date.now()) / 60000
-    return minutesToExit > -15 && minutesToExit < 45 // Within -15 to +45 min
-  }).sort((a, b) => new Date(a.exitWindow.start).getTime() - new Date(b.exitWindow.start).getTime())
-
-  // Determine primary zone and action
+  // Determine action based on ramification
   let mode: ActionMode = 'rest'
-  let zone = 'Châtelet'
-  let corridor: CorridorDirection | 'centre' = 'centre'
-  let why = 'Pas de signal fort'
+  let zone = topZone || 'Châtelet'
+  let corridor: CorridorDirection | 'centre' = topCorridor || 'centre'
+  let why = 'Pas de pression significative'
+  let cause = ''
+  let consequence = ''
   const sourceRefs: SourceRef[] = []
   let timerTarget: string | null = null
+  let magnitude: MagnitudeRange | null = null
 
-  // Priority 1: Upcoming event exit
-  if (upcomingEvents.length > 0) {
-    const event = upcomingEvents[0]
-    const minutesToExit = minutesUntil(event.exitWindow.start)
+  if (primaryRam) {
+    zone = primaryRam.action.target
+    corridor = primaryRam.flow.corridor
+    cause = primaryRam.source.zone
+    consequence = `~${primaryRam.magnitude.low}–${primaryRam.magnitude.high} ${primaryRam.magnitude.label}`
+    magnitude = primaryRam.magnitude
 
-    zone = event.zone
-    corridor = event.corridor
-    sourceRefs.push(eventToSourceRef(event))
+    // Build comprehensive "why" with CAUSE → CONSEQUENCE → ACTION
+    why = `${primaryRam.action.reason}`
 
-    if (minutesToExit <= 0) {
+    sourceRefs.push({
+      id: primaryRam.source.id,
+      type: primaryRam.source.type,
+      label: primaryRam.action.reason,
+      confidence: primaryRam.confidence,
+    })
+
+    if (primaryRam.window.minutesUntil <= 0) {
       mode = 'move'
-      why = `Sortie ${event.venue} en cours`
-    } else if (minutesToExit <= 15) {
+      timerTarget = primaryRam.window.start
+    } else if (primaryRam.window.minutesUntil <= 15) {
       mode = 'prepare'
-      why = `Sortie ${event.venue} dans ${minutesToExit} min`
-      timerTarget = event.exitWindow.start
+      timerTarget = primaryRam.window.start
     } else {
       mode = 'hold'
-      why = `${event.title} — sortie à ${formatTime(event.exitWindow.start)}`
-      timerTarget = event.exitWindow.start
+      timerTarget = primaryRam.window.start
     }
-  }
-  // Priority 2: Active ramification
-  else if (activeRamifications.length > 0) {
-    const ram = activeRamifications[0]
-    zone = ram.pressureZones[0] || ram.effectZones[0] || 'Centre'
-    corridor = ram.corridor || 'centre'
-    why = ram.explanation
-    sourceRefs.push(ramificationToSourceRef(ram))
-
-    const windowStart = new Date(ram.window.start)
-    if (windowStart.getTime() > Date.now()) {
-      mode = 'prepare'
-      timerTarget = ram.window.start
-    } else {
-      mode = 'move'
-    }
-  }
-  // Priority 3: Active skeleton window
-  else if (activeSkeletons.length > 0) {
-    const skel = activeSkeletons[0]
-    zone = skel.zones[0] || 'Centre'
-    corridor = skel.corridors[0] || 'centre'
-    why = skel.description
-    mode = 'hold'
-    sourceRefs.push(skeletonToSourceRef(skel))
   }
 
   // Build timer
@@ -242,141 +326,100 @@ function buildAction(pack: TonightPack, driverPosition?: { lat: number; lng: num
     const mins = Math.ceil(secs / 60)
     timer = {
       secondsLeft: secs,
-      label: `${mode === 'prepare' ? 'Pic dans' : 'Depuis'} ${mins} min`,
+      label: mode === 'move' ? 'Pic actif' : `Pic dans ${mins} min`,
       targetIso: timerTarget,
     }
   }
 
-  // Estimate arrondissement from zone
-  const arrondissementMap: Record<string, string> = {
-    'Châtelet': '1er',
-    'Marais': '4ème',
-    'Bastille': '11ème',
-    'République': '10ème',
-    'Opéra': '9ème',
-    'Saint-Lazare': '8ème',
-    'Gare du Nord': '10ème',
-    "Gare de l'Est": '10ème',
-    'Gare de Lyon': '12ème',
-    'Montparnasse': '14ème',
-    'Pigalle': '18ème',
-    'Nation': '12ème',
-    'Bercy': '12ème',
-  }
+  // Calculate scores
+  const opportunityScore = primaryRam ? Math.round(primaryRam.confidence * 100) : 30
+  const frictionRisk = pack.signals.some(s => s.type === 'transport' && (s as TransportSignal).status !== 'normal') ? 40 : 15
 
   return {
     mode,
     zone,
-    arrondissement: arrondissementMap[zone] || '',
+    arrondissement: ZONE_ARRONDISSEMENT[zone] || '',
     corridor,
-    confidence: sourceRefs.length > 0 ? Math.max(...sourceRefs.map(s => s.confidence)) : 0.3,
+    confidence: primaryRam?.confidence || 0.3,
     why,
     sourceRefs,
     timer,
     entrySide: corridor !== 'centre' ? `Accès ${corridor}` : null,
-    opportunityScore: sourceRefs.length > 0 ? Math.round(sourceRefs[0].confidence * 100) : 30,
-    frictionRisk: 20, // Default low risk
-  }
+    opportunityScore,
+    frictionRisk,
+    // Extended fields for v1.7
+    cause,
+    consequence,
+    flow: dominantFlow,
+    magnitude,
+  } as FlowViewAction & { cause: string; consequence: string; flow: string; magnitude: MagnitudeRange | null }
 }
 
 // ════════════════════════════════════════════════════════════════
-// MAP BUILDER
+// MAP BUILDER — Uses pressure engine zoneHeat
 // ════════════════════════════════════════════════════════════════
 
-function buildMap(pack: TonightPack): FlowViewMap {
+function buildMap(
+  pack: TonightPack,
+  pressureZoneHeat: Record<string, number>,
+  fullRamifications: FullRamification[]
+): FlowViewMap {
   const zoneHeat: Record<string, number> = {}
   const zoneState: Record<string, ZoneHeatLevel> = {}
   const zoneWhy: Record<string, ZoneWhy> = {}
 
-  // Initialize all zones as cold
+  // Initialize all zones with pressure engine heat
   for (const id of TERRITORY_IDS) {
-    zoneHeat[id] = 0
-    zoneState[id] = 'cold'
-    zoneWhy[id] = { heat: 0, state: 'cold', reasons: [], sourceRefs: [] }
+    const heat = pressureZoneHeat[id] || 0
+    zoneHeat[id] = heat
+    zoneState[id] = heat > 0.7 ? 'hot' : heat > 0.3 ? 'warm' : 'cold'
+    zoneWhy[id] = {
+      heat,
+      state: zoneState[id],
+      reasons: [],
+      sourceRefs: [],
+    }
   }
 
-  // Apply event signals
-  const events = pack.signals.filter((s): s is EventSignal => s.type === 'event')
-  for (const event of events) {
-    const exitStart = new Date(event.exitWindow.start)
-    const minutesToExit = (exitStart.getTime() - Date.now()) / 60000
-
-    // Only count events within active window
-    if (minutesToExit > -30 && minutesToExit < 60) {
-      const zone = event.zone
+  // Add reasons from ramifications
+  for (const ram of fullRamifications) {
+    for (const zone of ram.flow.pressureZones) {
       if (zoneWhy[zone]) {
-        const heat = Math.min(1, (zoneWhy[zone].heat || 0) + event.confidence * 0.5)
-        zoneHeat[zone] = heat
-        zoneWhy[zone].heat = heat
-        zoneWhy[zone].reasons.push(`${event.title} @ ${event.venue}`)
-        zoneWhy[zone].sourceRefs.push(eventToSourceRef(event))
-        zoneWhy[zone].state = heat > 0.7 ? 'hot' : heat > 0.3 ? 'warm' : 'cold'
-        zoneState[zone] = zoneWhy[zone].state
+        zoneWhy[zone].reasons.push(ram.action.reason)
+        zoneWhy[zone].sourceRefs.push({
+          id: ram.source.id,
+          type: ram.source.type,
+          label: ram.action.reason,
+          confidence: ram.confidence,
+        })
       }
     }
   }
 
-  // Apply ramifications
-  for (const ram of pack.ramifications) {
-    const start = new Date(ram.window.start)
-    const end = new Date(ram.window.end)
-    const now = Date.now()
+  // Build banlieue magnets with pressure data
+  const parisTime = getParisTime()
+  const dayOfWeek = parisTime.getDay()
 
-    // Active or upcoming ramifications
-    if (now >= start.getTime() - 30 * 60 * 1000 && now <= end.getTime()) {
-      for (const zone of [...ram.pressureZones, ...ram.effectZones]) {
-        if (zoneWhy[zone]) {
-          const heat = Math.min(1, (zoneWhy[zone].heat || 0) + ram.confidence * 0.3)
-          zoneHeat[zone] = heat
-          zoneWhy[zone].heat = heat
-          zoneWhy[zone].reasons.push(ram.explanation)
-          zoneWhy[zone].sourceRefs.push(ramificationToSourceRef(ram))
-          zoneWhy[zone].state = heat > 0.7 ? 'hot' : heat > 0.3 ? 'warm' : 'cold'
-          zoneState[zone] = zoneWhy[zone].state
-        }
-      }
-    }
-  }
-
-  // Apply skeleton windows
-  const now = getParisTime()
-  const dayOfWeek = now.getDay()
-  const currentTimeStr = now.toTimeString().slice(0, 5)
-
-  for (const skel of pack.weeklySkeleton) {
-    const days = Array.isArray(skel.dayOfWeek) ? skel.dayOfWeek : [skel.dayOfWeek]
-    if (!days.includes(dayOfWeek)) continue
-    if (currentTimeStr < skel.window.start || currentTimeStr > skel.window.end) continue
-
-    for (const zone of skel.zones) {
-      if (zoneWhy[zone]) {
-        const intensity = skel.intensity / 5 // Normalize 0-5 to 0-1
-        const heat = Math.min(1, (zoneWhy[zone].heat || 0) + intensity * skel.confidence)
-        zoneHeat[zone] = heat
-        zoneWhy[zone].heat = heat
-        zoneWhy[zone].reasons.push(skel.description)
-        zoneWhy[zone].sourceRefs.push(skeletonToSourceRef(skel))
-        zoneWhy[zone].state = heat > 0.7 ? 'hot' : heat > 0.3 ? 'warm' : 'cold'
-        zoneState[zone] = zoneWhy[zone].state
-      }
-    }
-  }
-
-  // Build banlieue magnets
   const banlieueMagnets: BanlieueMagnet[] = BANLIEUE_MAGNETS_STATIC.map(def => {
-    // Find signals affecting this magnet
     const magnetSourceRefs: SourceRef[] = []
     let heat = 0
     let why: string | null = null
     let nextPic: string | null = null
 
     // Check ramifications for this corridor
-    for (const ram of pack.ramifications) {
-      if (ram.corridor === def.corridor) {
-        heat = Math.max(heat, ram.confidence * 0.5)
-        why = ram.explanation
-        magnetSourceRefs.push(ramificationToSourceRef(ram))
-        if (!nextPic) nextPic = formatTime(ram.window.start)
+    for (const ram of fullRamifications) {
+      if (ram.flow.corridor === def.corridor) {
+        heat = Math.max(heat, ram.confidence * 0.6)
+        why = ram.action.reason
+        magnetSourceRefs.push({
+          id: ram.source.id,
+          type: ram.source.type,
+          label: ram.action.reason,
+          confidence: ram.confidence,
+        })
+        if (!nextPic && ram.window.minutesUntil > 0) {
+          nextPic = formatTime(ram.window.start)
+        }
       }
     }
 
@@ -412,127 +455,91 @@ function buildMap(pack: TonightPack): FlowViewMap {
 }
 
 // ════════════════════════════════════════════════════════════════
-// NEXT BUILDER (upcoming windows)
+// NEXT BUILDER — Uses full ramifications
 // ════════════════════════════════════════════════════════════════
 
-function buildNext(pack: TonightPack): FlowViewNext {
-  const upcoming: UpcomingWindow[] = []
-  const now = Date.now()
+function buildNext(fullRamifications: FullRamification[]): FlowViewNext {
+  const upcoming: UpcomingWindow[] = fullRamifications
+    .filter(r => r.window.minutesUntil > 0 && r.window.minutesUntil < 120)
+    .sort((a, b) => a.window.minutesUntil - b.window.minutesUntil)
+    .slice(0, 4)
+    .map(ram => ({
+      time: formatTime(ram.window.start),
+      timeIso: ram.window.start,
+      zone: ram.action.target,
+      corridor: ram.flow.corridor,
+      label: ram.action.reason,
+      intensity: ram.confidence,
+      minutesUntil: ram.window.minutesUntil,
+      sourceRefs: [{
+        id: ram.source.id,
+        type: ram.source.type,
+        label: ram.action.reason,
+        confidence: ram.confidence,
+      }],
+      // Extended: show magnitude
+      magnitude: ram.magnitude,
+      flow: ram.flow.direction,
+      action: ram.action.type,
+    }))
 
-  // Add upcoming ramifications
-  for (const ram of pack.ramifications) {
-    const start = new Date(ram.window.start)
-    const minutesToStart = (start.getTime() - now) / 60000
-
-    // Only future ramifications, within 2 hours
-    if (minutesToStart > 0 && minutesToStart < 120) {
-      upcoming.push({
-        time: formatTime(ram.window.start),
-        timeIso: ram.window.start,
-        zone: ram.pressureZones[0] || ram.effectZones[0] || 'Centre',
-        corridor: ram.corridor || 'centre',
-        label: ram.explanation,
-        intensity: ram.confidence,
-        minutesUntil: Math.round(minutesToStart),
-        sourceRefs: [ramificationToSourceRef(ram)],
-      })
-    }
-  }
-
-  // Add upcoming events
-  const events = pack.signals.filter((s): s is EventSignal => s.type === 'event')
-  for (const event of events) {
-    const exitStart = new Date(event.exitWindow.start)
-    const minutesToExit = (exitStart.getTime() - now) / 60000
-
-    if (minutesToExit > 0 && minutesToExit < 120) {
-      upcoming.push({
-        time: formatTime(event.exitWindow.start),
-        timeIso: event.exitWindow.start,
-        zone: event.zone,
-        corridor: event.corridor,
-        label: `Sortie ${event.venue}`,
-        intensity: event.confidence,
-        minutesUntil: Math.round(minutesToExit),
-        sourceRefs: [eventToSourceRef(event)],
-      })
-    }
-  }
-
-  // Sort by time and take first 4
-  upcoming.sort((a, b) => a.minutesUntil - b.minutesUntil)
-
-  return {
-    upcoming: upcoming.slice(0, 4),
-  }
+  return { upcoming }
 }
 
 // ════════════════════════════════════════════════════════════════
-// TONIGHT BUILDER (peaks)
+// TONIGHT BUILDER — Peaks with magnitude
 // ════════════════════════════════════════════════════════════════
 
-function buildTonight(pack: TonightPack): FlowViewTonight {
+function buildTonight(pack: TonightPack, fullRamifications: FullRamification[]): FlowViewTonight {
   const peaks: TonightPeak[] = []
-  const now = getParisTime()
-  const dayOfWeek = now.getDay()
-  const currentTimeStr = now.toTimeString().slice(0, 5)
+  const parisTime = getParisTime()
+  const currentTimeStr = parisTime.toTimeString().slice(0, 5)
   const activeSkeletonWindows: string[] = []
 
-  // Add high-confidence ramifications as peaks
-  for (const ram of pack.ramifications) {
-    if (ram.confidence >= 0.5) {
-      peaks.push({
-        time: formatTime(ram.window.start),
-        timeIso: ram.window.start,
-        zone: ram.pressureZones[0] || ram.effectZones[0] || 'Centre',
-        corridor: ram.corridor || 'centre',
-        reason: ram.explanation,
-        venue: null,
-        magnitude: ram.confidence,
-        confidence: ram.confidence,
-        sourceRefs: [ramificationToSourceRef(ram)],
-      })
-    }
-  }
-
-  // Add events as peaks
-  const events = pack.signals.filter((s): s is EventSignal => s.type === 'event')
-  for (const event of events) {
+  // Add ramifications as peaks with full data
+  for (const ram of fullRamifications) {
     peaks.push({
-      time: formatTime(event.exitWindow.start),
-      timeIso: event.exitWindow.start,
-      zone: event.zone,
-      corridor: event.corridor,
-      reason: `Sortie ${event.title}`,
-      venue: event.venue,
-      magnitude: event.confidence,
-      confidence: event.confidence,
-      sourceRefs: [eventToSourceRef(event)],
+      time: formatTime(ram.window.start),
+      timeIso: ram.window.start,
+      zone: ram.action.target,
+      corridor: ram.flow.corridor,
+      reason: ram.action.reason,
+      venue: ram.source.zone,
+      magnitude: ram.confidence,
+      confidence: ram.confidence,
+      sourceRefs: [{
+        id: ram.source.id,
+        type: ram.source.type,
+        label: ram.action.reason,
+        confidence: ram.confidence,
+      }],
+      // Extended: CAUSE → CONSEQUENCE → ACTION
+      cause: ram.source.zone,
+      exits: ram.magnitude,
+      flow: ram.flow.direction,
+      pressureZones: ram.flow.pressureZones,
+      action: {
+        type: ram.action.type,
+        target: ram.action.target,
+        arrondissement: ram.action.arrondissement,
+      },
+    } as TonightPeak & {
+      cause: string
+      exits: MagnitudeRange
+      flow: string
+      pressureZones: string[]
+      action: { type: string; target: string; arrondissement: string }
     })
   }
 
-  // Add skeleton windows as peaks
+  // Track active skeleton windows
   for (const skel of pack.weeklySkeleton) {
     const days = Array.isArray(skel.dayOfWeek) ? skel.dayOfWeek : [skel.dayOfWeek]
-    if (!days.includes(dayOfWeek)) continue
+    if (!days.includes(parisTime.getDay())) continue
 
-    const isActive = currentTimeStr >= skel.window.start && currentTimeStr <= skel.window.end
-    if (isActive) {
+    if (currentTimeStr >= skel.window.start && currentTimeStr <= skel.window.end) {
       activeSkeletonWindows.push(skel.name)
     }
-
-    // Add as peak if today
-    peaks.push({
-      time: skel.window.start,
-      timeIso: new Date(`${pack.date}T${skel.window.start}:00`).toISOString(),
-      zone: skel.zones[0] || 'Centre',
-      corridor: skel.corridors[0] || 'centre',
-      reason: skel.description,
-      venue: null,
-      magnitude: skel.intensity / 5,
-      confidence: skel.confidence,
-      sourceRefs: [skeletonToSourceRef(skel)],
-    })
   }
 
   // Sort by time
@@ -559,9 +566,7 @@ function buildFrictions(pack: TonightPack): ActiveFriction[] {
       label: weather.condition === 'rain' || weather.condition === 'heavy_rain'
         ? 'Pluie'
         : weather.condition,
-      implication: weather.impact === 'fragmented'
-        ? 'Demande fragmentée — courses courtes'
-        : 'Conditions météo dégradées',
+      implication: `+${Math.round(weather.rainProbability * 30)}% demande, trajets courts`,
       corridor: null,
       sourceRefs: [weatherToSourceRef(weather)],
     })
@@ -573,8 +578,8 @@ function buildFrictions(pack: TonightPack): ActiveFriction[] {
     if (t.status === 'disrupted' || t.status === 'closed') {
       frictions.push({
         type: 'transit',
-        label: `${t.line} perturbé`,
-        implication: `Pression sur ${t.affectedZones.join(', ')}`,
+        label: `${t.line} ${t.status === 'closed' ? 'fermé' : 'perturbé'}`,
+        implication: `Pression VTC sur ${t.affectedZones.join(', ')}`,
         corridor: t.corridor === 'unknown' ? null : t.corridor,
         sourceRefs: [transportToSourceRef(t)],
       })
@@ -585,57 +590,121 @@ function buildFrictions(pack: TonightPack): ActiveFriction[] {
 }
 
 // ════════════════════════════════════════════════════════════════
-// ALTERNATIVES BUILDER
+// ALTERNATIVES BUILDER — Uses corridor pressure
 // ════════════════════════════════════════════════════════════════
 
-function buildAlternatives(pack: TonightPack, primaryZone: string): AlternativeZone[] {
+function buildAlternatives(
+  fullRamifications: FullRamification[],
+  primaryZone: string,
+  zoneHeat: Record<string, number>
+): AlternativeZone[] {
+  // Find zones with good heat that aren't primary
   const alternatives: AlternativeZone[] = []
-  const now = getParisTime()
-  const dayOfWeek = now.getDay()
-  const currentTimeStr = now.toTimeString().slice(0, 5)
 
-  // Find active skeleton zones that aren't the primary
-  for (const skel of pack.weeklySkeleton) {
-    const days = Array.isArray(skel.dayOfWeek) ? skel.dayOfWeek : [skel.dayOfWeek]
-    if (!days.includes(dayOfWeek)) continue
-    if (currentTimeStr < skel.window.start || currentTimeStr > skel.window.end) continue
+  const sortedZones = Object.entries(zoneHeat)
+    .filter(([zone]) => zone !== primaryZone)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
 
-    for (const zone of skel.zones) {
-      if (zone === primaryZone) continue
-      if (alternatives.find(a => a.zone === zone)) continue
+  for (const [zone, heat] of sortedZones) {
+    if (heat < 0.2) continue // Skip cold zones
 
-      alternatives.push({
-        zone,
-        arrondissement: '',
-        corridor: skel.corridors[0] || 'centre',
-        distance_km: 0, // Would need driver position
-        eta_min: 0,
-        condition: `Si ${primaryZone} saturé`,
-        why: skel.description,
-        sourceRefs: [skeletonToSourceRef(skel)],
-      })
-    }
+    // Find which ramification drives this zone
+    const ram = fullRamifications.find(r => r.flow.pressureZones.includes(zone))
+
+    alternatives.push({
+      zone,
+      arrondissement: ZONE_ARRONDISSEMENT[zone] || '',
+      corridor: ram?.flow.corridor || 'centre',
+      distance_km: 0,
+      eta_min: 0,
+      condition: `Si ${primaryZone} saturé`,
+      why: ram?.action.reason || 'Zone alternative',
+      sourceRefs: ram ? [{
+        id: ram.source.id,
+        type: ram.source.type,
+        label: ram.action.reason,
+        confidence: ram.confidence,
+      }] : [],
+    })
   }
 
-  return alternatives.slice(0, 3)
+  return alternatives
 }
 
 // ════════════════════════════════════════════════════════════════
-// MAIN ADAPTER
+// CORRIDOR STATUS BUILDER
+// ════════════════════════════════════════════════════════════════
+
+interface CorridorStatus {
+  direction: CorridorDirection
+  status: 'fluide' | 'dense' | 'saturé'
+  pressure: number
+  reason: string | null
+}
+
+function buildCorridorStatuses(fullRamifications: FullRamification[]): CorridorStatus[] {
+  const corridorPressure: Record<CorridorDirection, { total: number; reasons: string[] }> = {
+    nord: { total: 0, reasons: [] },
+    est: { total: 0, reasons: [] },
+    sud: { total: 0, reasons: [] },
+    ouest: { total: 0, reasons: [] },
+  }
+
+  for (const ram of fullRamifications) {
+    if (ram.flow.corridor !== 'centre') {
+      const dir = ram.flow.corridor as CorridorDirection
+      corridorPressure[dir].total += ram.confidence
+      corridorPressure[dir].reasons.push(ram.action.reason)
+    }
+  }
+
+  return (Object.entries(corridorPressure) as [CorridorDirection, { total: number; reasons: string[] }][])
+    .map(([direction, data]): CorridorStatus => ({
+      direction,
+      status: data.total > 0.7 ? 'saturé' : data.total > 0.3 ? 'dense' : 'fluide',
+      pressure: data.total,
+      reason: data.reasons[0] || null,
+    }))
+    .sort((a, b) => b.pressure - a.pressure)
+}
+
+// ════════════════════════════════════════════════════════════════
+// MAIN ADAPTER — Full pipeline
 // ════════════════════════════════════════════════════════════════
 
 export function tonightPackToFlowViewModel(
   pack: TonightPack,
   source: string,
   driverPosition?: { lat: number; lng: number }
-): FlowViewModel {
+): FlowViewModel & {
+  corridorStatuses: CorridorStatus[]
+  fullRamifications: FullRamification[]
+} {
+  // 1. Convert to pressure signals
+  const pressureSignals = convertToPressureSignals(pack)
+
+  // 2. Run corridor pressure engine
+  const {
+    zoneHeat: pressureZoneHeat,
+    corridorPressures,
+    topZone,
+    topCorridor,
+    dominantFlow,
+  } = computeCorridorPressure(pressureSignals)
+
+  // 3. Build full ramifications
+  const fullRamifications = buildFullRamifications(pressureSignals, corridorPressures)
+
+  // 4. Build all view components
   const meta = buildMeta(pack, source)
-  const action = buildAction(pack, driverPosition)
-  const map = buildMap(pack)
-  const next = buildNext(pack)
-  const tonight = buildTonight(pack)
+  const action = buildAction(pack, fullRamifications, topZone, topCorridor, dominantFlow)
+  const map = buildMap(pack, pressureZoneHeat, fullRamifications)
+  const next = buildNext(fullRamifications)
+  const tonight = buildTonight(pack, fullRamifications)
   const activeFrictions = buildFrictions(pack)
-  const alternatives = buildAlternatives(pack, action.zone)
+  const alternatives = buildAlternatives(fullRamifications, action.zone, pressureZoneHeat)
+  const corridorStatuses = buildCorridorStatuses(fullRamifications)
 
   return {
     version: 2,
@@ -648,5 +717,8 @@ export function tonightPackToFlowViewModel(
     alternatives,
     driverPosition,
     generatedAt: new Date().toISOString(),
+    // v1.7 extensions
+    corridorStatuses,
+    fullRamifications,
   }
 }
