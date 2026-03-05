@@ -516,7 +516,7 @@ function ReadMode({
         </motion.p>
 
         {/* AUTRES PISTES — alternative opportunities */}
-        {opportunities && opportunities.length > 1 && (
+        {opportunities && Array.isArray(opportunities) && opportunities.length > 1 && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -527,14 +527,17 @@ function ReadMode({
               AUTRES PISTES
             </p>
             <div className="space-y-2">
-              {opportunities.slice(1, 5).map((opp, index) => (
-                <OpportunityRow
-                  key={opp.id}
-                  opportunity={opp}
-                  index={index}
-                  breathPhase={breathPhase}
-                />
-              ))}
+              {opportunities
+                .slice(1, 5)
+                .filter(opp => opp && opp.id && opp.state)
+                .map((opp, index) => (
+                  <OpportunityRow
+                    key={opp.id}
+                    opportunity={opp}
+                    index={index}
+                    breathPhase={breathPhase}
+                  />
+                ))}
             </div>
           </motion.div>
         )}
@@ -1175,11 +1178,14 @@ function OpportunityRow({
   index: number
   breathPhase: number
 }) {
-  const { state, momentum, minutesRemaining, windowProgress, ou, kind } = opportunity
-  const stateSymbol = STATE_SYMBOLS[state]
-  const momentumArrow = MOMENTUM_ARROWS[momentum]
-  const stateColor = STATE_COLORS[state]
-  const momentumColor = MOMENTUM_COLORS[momentum]
+  // Defensive: ensure opportunity has required fields
+  if (!opportunity || !opportunity.state) return null
+
+  const { state = 'horizon', momentum = 'stable', minutesRemaining = 0, windowProgress = 0, ou = '', kind = 'piste' } = opportunity
+  const stateSymbol = STATE_SYMBOLS[state] || '·'
+  const momentumArrow = MOMENTUM_ARROWS[momentum] || '→'
+  const stateColor = STATE_COLORS[state] || 'text-text-ghost'
+  const momentumColor = MOMENTUM_COLORS[momentum] || 'text-text-ghost'
   const pressureLabel = getPressureLabel(state, minutesRemaining)
 
   // Active dots pulse
