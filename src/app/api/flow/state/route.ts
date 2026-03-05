@@ -16,6 +16,9 @@ import { checkRateLimit, getClientIp, RATE_LIMITS } from '@/lib/rate-limit'
 import { flowStateParamsSchema, parseQueryParams } from '@/lib/validation'
 import { cache, CACHE_KEYS, CACHE_TTL } from '@/lib/cache'
 import { compileLiveTonightPack } from '@/lib/city-signals/compileLive'
+import { storageFetchJson, isStorageConfigured } from '@/lib/supabase/storageFetchJson'
+import type { TonightPack } from '@/lib/signal-fetchers/types'
+import { tonightPackToCitySignalsPack, isTonightPack } from '@/lib/city-signals/tonightPackAdapter'
 import type { FlowState, Ramification, DriverPosition } from '@/types/flow-state'
 import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
 import type { CompiledBrief } from '@/lib/prompts/contracts'
@@ -129,40 +132,67 @@ function getMockFlowState(sessionStart?: number): FlowState {
   }
 }
 
-/** Get city signals with caching — falls back to live compilation if no pack stored */
-async function getCachedCitySignals(): Promise<{ pack: CitySignalsPackV1 | null; liveCompiled: boolean }> {
-  const today = new Date().toISOString().split('T')[0]
-  const cacheKey = CACHE_KEYS.citySignals(today)
+/** Get tonight's date (handles cross-midnight: before 06:00 = yesterday) */
+function getTonightDate(): string {
+  const now = new Date()
+  const parisTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }))
+  const hour = parisTime.getHours()
+  if (hour < 6) parisTime.setDate(parisTime.getDate() - 1)
+  return parisTime.toISOString().slice(0, 10)
+}
+
+/** Get city signals with caching — PRIORITIZES live compilation when no tonight pack in storage */
+async function getCachedCitySignals(): Promise<{ pack: CitySignalsPackV1 | null; liveCompiled: boolean; source: string }> {
+  const tonightDate = getTonightDate()
+  const cacheKey = CACHE_KEYS.citySignals(tonightDate)
 
   // Check cache first
   const cached = cache.get<CitySignalsPackV1>(cacheKey)
   if (cached) {
-    return { pack: cached, liveCompiled: false }
+    return { pack: cached, liveCompiled: false, source: 'cache' }
   }
 
-  // Load from Supabase storage
-  const rawPack = await loadCitySignals()
-  if (rawPack) {
-    const normalized = normalizeCitySignalsPack(rawPack)
-    cache.set(cacheKey, normalized, CACHE_TTL.citySignals)
-    return { pack: normalized, liveCompiled: false }
+  // 1. Try tonight pack from Supabase Storage directly
+  if (isStorageConfigured()) {
+    try {
+      const storagePath = `tonight/${tonightDate}.paris-idf.json`
+      const tonightPack = await storageFetchJson<TonightPack>('flow-packs', storagePath)
+      if (tonightPack && isTonightPack(tonightPack)) {
+        console.log(`[flow/state] Source: Supabase tonight pack (${tonightDate})`)
+        const pack = tonightPackToCitySignalsPack(tonightPack)
+        const normalized = normalizeCitySignalsPack(pack)
+        cache.set(cacheKey, normalized, CACHE_TTL.citySignals)
+        return { pack: normalized, liveCompiled: false, source: 'storage-tonight' }
+      }
+    } catch (err) {
+      console.error('[flow/state] Tonight pack fetch error:', err)
+    }
   }
 
-  // No pack in storage → compile signals live (self-healing)
-  console.log('[flow/state] No pack in storage — compiling live tonight pack...')
+  // 2. No tonight pack → compile signals LIVE (self-healing)
+  console.log('[flow/state] No tonight pack in storage — compiling live...')
   try {
     const livePack = await compileLiveTonightPack()
     if (livePack) {
       const normalized = normalizeCitySignalsPack(livePack)
-      // Cache for shorter TTL — this is a live compilation, will be replaced by cron
+      // Cache for shorter TTL — live compilation, will be replaced by cron
       cache.set(cacheKey, normalized, Math.min(CACHE_TTL.citySignals, 300))
-      return { pack: normalized, liveCompiled: true }
+      return { pack: normalized, liveCompiled: true, source: 'live-compiled' }
     }
   } catch (err) {
     console.error('[flow/state] Live compilation failed:', err)
   }
 
-  return { pack: null, liveCompiled: false }
+  // 3. Fallback to loadCitySignals (events compilation, daily pack, etc.)
+  console.log('[flow/state] Live compilation failed — falling back to loadCitySignals')
+  const rawPack = await loadCitySignals()
+  if (rawPack) {
+    const normalized = normalizeCitySignalsPack(rawPack)
+    cache.set(cacheKey, normalized, CACHE_TTL.citySignals)
+    return { pack: normalized, liveCompiled: false, source: 'fallback' }
+  }
+
+  return { pack: null, liveCompiled: false, source: 'none' }
 }
 
 export async function GET(request: Request) {
@@ -215,7 +245,7 @@ export async function GET(request: Request) {
   }
 
   // Load city signals (cached, with live compilation fallback)
-  const { pack, liveCompiled } = await getCachedCitySignals()
+  const { pack, liveCompiled, source } = await getCachedCitySignals()
   // Use real compiled brief or honest empty state - NEVER mock data
   const brief = pack ? compiledFromCitySignalsPackV1(pack) : createEmptyBrief()
 
@@ -266,7 +296,7 @@ export async function GET(request: Request) {
     headers: {
       'Cache-Control': 'no-store',
       'X-RateLimit-Remaining': String(rateLimit.remaining),
-      'X-Flow-Source': pack ? (liveCompiled ? 'live-compiled' : 'storage-pack') : 'empty-brief',
+      'X-Flow-Source': pack ? source : 'empty-brief',
     },
   })
 }
