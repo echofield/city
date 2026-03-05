@@ -1,8 +1,14 @@
 /**
- * FLOW VIEW MODEL — v1.6
+ * FLOW VIEW MODEL — v1.8
  *
  * Clean contract for the dashboard. Every UI element has sourceRefs
  * for full traceability back to real signals and ramifications.
+ *
+ * v1.8 additions:
+ * - Lost Money Radar — show missed opportunities
+ * - Metro Closing Signal — demand multiplier
+ * - Shift Arc — where the night is moving
+ * - Swarm Feedback — driver events as demand sensors
  *
  * The 6 "information links" that make the system feel real:
  * 1. action.why → sourceRefs → signal/ramification IDs
@@ -293,4 +299,86 @@ export interface DebugTrace {
   }>
   /** Compilation timestamp */
   compiledAt: string
+}
+
+// ════════════════════════════════════════════════════════════════
+// v1.8 — LOST MONEY RADAR
+// ════════════════════════════════════════════════════════════════
+
+export interface LostOpportunity {
+  zone: string
+  arrondissement: string
+  /** Heat delta (how much hotter than driver's zone) */
+  heatDelta: number
+  /** Estimated pickups missed */
+  pickupsEstimate: number
+  /** Estimated EUR missed */
+  revenueEstimate: { low: number; high: number }
+  /** Distance in minutes */
+  distanceMin: number
+  /** Why this zone is hot */
+  reason: string
+}
+
+// ════════════════════════════════════════════════════════════════
+// v1.8 — METRO CLOSING SIGNAL
+// ════════════════════════════════════════════════════════════════
+
+export interface MetroClosingSignal {
+  /** Is metro currently closed? */
+  isClosed: boolean
+  /** Minutes until metro closes (null if already closed or >60 min) */
+  minutesUntilClose: number | null
+  /** Demand multiplier to apply */
+  demandMultiplier: number
+  /** Human message */
+  message: string
+}
+
+// ════════════════════════════════════════════════════════════════
+// v1.8 — SHIFT ARC
+// ════════════════════════════════════════════════════════════════
+
+export type ShiftPhase = 'calme' | 'montee' | 'pic' | 'dispersion' | 'nuit_profonde'
+
+export interface ShiftArc {
+  currentPhase: ShiftPhase
+  nextPhase: ShiftPhase | null
+  minutesUntilNext: number | null
+  /** Where the night is moving */
+  flowDirection: string
+  /** Recommended positioning */
+  recommendation: string
+}
+
+// ════════════════════════════════════════════════════════════════
+// v1.8 — CORRIDOR STATUS
+// ════════════════════════════════════════════════════════════════
+
+export interface CorridorStatus {
+  direction: CorridorDirection
+  status: 'fluide' | 'dense' | 'saturé'
+  pressure: number
+  reason: string | null
+}
+
+// ════════════════════════════════════════════════════════════════
+// v1.8 — EXTENDED FLOW VIEW MODEL
+// ════════════════════════════════════════════════════════════════
+
+export interface FlowViewModelV18 extends FlowViewModel {
+  /** Lost Money Radar — nearby opportunities driver is missing */
+  lostOpportunities: LostOpportunity[]
+  /** Metro closing signal — demand multiplier */
+  metroSignal: MetroClosingSignal
+  /** Shift arc — where the night is moving */
+  shiftArc: ShiftArc
+  /** Corridor statuses — NORD/EST/SUD/OUEST */
+  corridorStatuses: CorridorStatus[]
+  /** Swarm stats — if driver events available */
+  swarmStats?: {
+    activeDrivers: number
+    recentPickups: number
+    demandConfidence: number
+  }
 }

@@ -1,11 +1,16 @@
 /**
- * GET /api/flow/viewmodel — FlowViewModel v1.6
+ * GET /api/flow/viewmodel — FlowViewModel v1.8
  *
- * Returns clean FlowViewModel with full sourceRefs traceability.
- * Every UI element links back to real signals.
+ * Returns FlowViewModel with:
+ * - Corridor Pressure Engine (city physics)
+ * - Lost Money Radar (missed opportunities)
+ * - Metro Closing Signal (demand multiplier)
+ * - Shift Arc (where the night is moving)
+ * - Full sourceRefs traceability
  *
  * Query params:
  *   - lat, lng: Driver position (optional)
+ *   - zone: Driver's current zone (optional, for lost money radar)
  *   - nocache: Skip cache (debug)
  *   - recompile: Force live recompilation (debug)
  *   - debug: Include full trace data
@@ -16,7 +21,7 @@ import { NextResponse } from 'next/server'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-import { tonightPackToFlowViewModel } from '@/lib/flow-engine/flow-view-model-adapter'
+import { tonightPackToFlowViewModel, type FlowViewModelV18Result } from '@/lib/flow-engine/flow-view-model-adapter'
 import { compileLiveTonightPack } from '@/lib/city-signals/compileLive'
 import { storageFetchJson, isStorageConfigured } from '@/lib/supabase/storageFetchJson'
 import { checkRateLimit, getClientIp, RATE_LIMITS } from '@/lib/rate-limit'
@@ -24,6 +29,7 @@ import { cache, CACHE_KEYS, CACHE_TTL } from '@/lib/cache'
 import type { TonightPack } from '@/lib/signal-fetchers/types'
 import { isTonightPack } from '@/lib/city-signals/tonightPackAdapter'
 import type { FlowViewModel, DebugTrace } from '@/types/flow-view-model'
+import { computeMetroClosingSignal, computeShiftArc } from '@/lib/flow-engine/swarm-feedback'
 
 /** Get tonight's date (handles cross-midnight: before 06:00 = yesterday) */
 function getTonightDate(): string {
@@ -142,7 +148,7 @@ function buildDebugTrace(pack: TonightPack): DebugTrace {
 }
 
 /** Create empty FlowViewModel when no data available */
-function createEmptyViewModel(): FlowViewModel {
+function createEmptyViewModel(): FlowViewModelV18Result {
   return {
     version: 2,
     meta: {
@@ -177,6 +183,12 @@ function createEmptyViewModel(): FlowViewModel {
     activeFrictions: [],
     alternatives: [],
     generatedAt: new Date().toISOString(),
+    // v1.8 fields
+    corridorStatuses: [],
+    fullRamifications: [],
+    lostOpportunities: [],
+    metroSignal: computeMetroClosingSignal(),
+    shiftArc: computeShiftArc(),
   }
 }
 
@@ -203,6 +215,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const latStr = searchParams.get('lat')
   const lngStr = searchParams.get('lng')
+  const driverZone = searchParams.get('zone') || undefined
   const nocache = searchParams.get('nocache') === '1'
   const recompile = searchParams.get('recompile') === '1'
   const debug = searchParams.get('debug') === '1'
@@ -220,16 +233,18 @@ export async function GET(request: Request) {
   // Get tonight pack
   const { pack, source } = await getCachedTonightPack(nocache, recompile)
 
-  // Build FlowViewModel
-  let viewModel: FlowViewModel
+  // Build FlowViewModel v1.8
+  let viewModel: FlowViewModelV18Result
   if (pack) {
-    viewModel = tonightPackToFlowViewModel(pack, source, driverPosition)
+    // Pass driverZone for lost money radar calculation
+    // driverEvents would come from a separate events store (future)
+    viewModel = tonightPackToFlowViewModel(pack, source, driverPosition, driverZone, undefined)
   } else {
     viewModel = createEmptyViewModel()
   }
 
   // Optionally include debug trace
-  let response: FlowViewModel & { _debug?: DebugTrace } = viewModel
+  let response: FlowViewModelV18Result & { _debug?: DebugTrace } = viewModel
   if (debug && pack) {
     response = { ...viewModel, _debug: buildDebugTrace(pack) }
   }
@@ -239,7 +254,9 @@ export async function GET(request: Request) {
       'Cache-Control': 'no-store',
       'X-RateLimit-Remaining': String(rateLimit.remaining),
       'X-Flow-Source': source,
-      'X-Flow-Version': '2',
+      'X-Flow-Version': '1.8',
+      'X-Metro-Status': viewModel.metroSignal.isClosed ? 'closed' : 'open',
+      'X-Shift-Phase': viewModel.shiftArc.currentPhase,
     },
   })
 }

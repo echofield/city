@@ -50,6 +50,19 @@ import {
   type MagnitudeRange,
 } from './corridor-pressure'
 
+import {
+  computeMetroClosingSignal,
+  computeShiftArc,
+  computeLostOpportunities,
+  computeDemandHeat,
+  computeHybridHeat,
+  type DriverEvent,
+  type DemandHeat,
+  type LostOpportunity as SwarmLostOpportunity,
+  type MetroClosingSignal,
+  type ShiftArc,
+} from './swarm-feedback'
+
 // ════════════════════════════════════════════════════════════════
 // HELPERS
 // ════════════════════════════════════════════════════════════════
@@ -670,17 +683,29 @@ function buildCorridorStatuses(fullRamifications: FullRamification[]): CorridorS
 }
 
 // ════════════════════════════════════════════════════════════════
-// MAIN ADAPTER — Full pipeline
+// MAIN ADAPTER — Full pipeline v1.8
 // ════════════════════════════════════════════════════════════════
+
+export interface FlowViewModelV18Result extends FlowViewModel {
+  corridorStatuses: CorridorStatus[]
+  fullRamifications: FullRamification[]
+  lostOpportunities: SwarmLostOpportunity[]
+  metroSignal: MetroClosingSignal
+  shiftArc: ShiftArc
+  swarmStats?: {
+    activeDrivers: number
+    recentPickups: number
+    demandConfidence: number
+  }
+}
 
 export function tonightPackToFlowViewModel(
   pack: TonightPack,
   source: string,
-  driverPosition?: { lat: number; lng: number }
-): FlowViewModel & {
-  corridorStatuses: CorridorStatus[]
-  fullRamifications: FullRamification[]
-} {
+  driverPosition?: { lat: number; lng: number },
+  driverZone?: string,
+  driverEvents?: DriverEvent[]
+): FlowViewModelV18Result {
   // 1. Convert to pressure signals
   const pressureSignals = convertToPressureSignals(pack)
 
@@ -696,15 +721,88 @@ export function tonightPackToFlowViewModel(
   // 3. Build full ramifications
   const fullRamifications = buildFullRamifications(pressureSignals, corridorPressures)
 
-  // 4. Build all view components
+  // 4. Compute swarm feedback if driver events provided
+  let demandHeat: DemandHeat = {
+    zoneHeat: {},
+    pickupCounts: {},
+    activeDrivers: {},
+    computedAt: new Date().toISOString(),
+    eventCount: 0,
+  }
+  let swarmStats: FlowViewModelV18Result['swarmStats'] | undefined
+
+  if (driverEvents && driverEvents.length > 0) {
+    demandHeat = computeDemandHeat(driverEvents)
+    const totalDrivers = Object.values(demandHeat.activeDrivers).reduce((a, b) => a + b, 0)
+    const totalPickups = Object.values(demandHeat.pickupCounts).reduce((a, b) => a + b, 0)
+    swarmStats = {
+      activeDrivers: totalDrivers,
+      recentPickups: totalPickups,
+      demandConfidence: Math.min(1, demandHeat.eventCount / 20), // 20+ events = full confidence
+    }
+  }
+
+  // 5. Compute hybrid heat (corridor + swarm)
+  const hybridHeat = computeHybridHeat(pressureZoneHeat, demandHeat)
+
+  // 6. Compute metro closing signal
+  const metroSignal = computeMetroClosingSignal()
+
+  // 7. Apply metro multiplier to heat if metro closing
+  const finalHeat: Record<string, number> = {}
+  for (const [zone, heat] of Object.entries(hybridHeat)) {
+    finalHeat[zone] = Math.min(1, heat * metroSignal.demandMultiplier)
+  }
+
+  // 8. Compute shift arc
+  const shiftArc = computeShiftArc()
+
+  // 9. Build zone reasons map
+  const zoneReasons: Record<string, string[]> = {}
+  for (const ram of fullRamifications) {
+    for (const zone of ram.flow.pressureZones) {
+      if (!zoneReasons[zone]) zoneReasons[zone] = []
+      zoneReasons[zone].push(ram.action.reason)
+    }
+  }
+
+  // 10. Compute lost opportunities (if driver zone known)
+  let lostOpportunities: SwarmLostOpportunity[] = []
+  const effectiveDriverZone = driverZone || (driverPosition ? 'Châtelet' : topZone)
+  if (effectiveDriverZone) {
+    lostOpportunities = computeLostOpportunities(
+      effectiveDriverZone,
+      finalHeat,
+      demandHeat,
+      zoneReasons
+    )
+  }
+
+  // 11. Build all view components
   const meta = buildMeta(pack, source)
   const action = buildAction(pack, fullRamifications, topZone, topCorridor, dominantFlow)
-  const map = buildMap(pack, pressureZoneHeat, fullRamifications)
+  const map = buildMap(pack, finalHeat, fullRamifications)
   const next = buildNext(fullRamifications)
   const tonight = buildTonight(pack, fullRamifications)
   const activeFrictions = buildFrictions(pack)
-  const alternatives = buildAlternatives(fullRamifications, action.zone, pressureZoneHeat)
+  const alternatives = buildAlternatives(fullRamifications, action.zone, finalHeat)
   const corridorStatuses = buildCorridorStatuses(fullRamifications)
+
+  // 12. Add metro signal to frictions if relevant
+  if (metroSignal.minutesUntilClose !== null && metroSignal.minutesUntilClose <= 30) {
+    activeFrictions.unshift({
+      type: 'transit',
+      label: metroSignal.isClosed ? 'Métro fermé' : `Métro ferme dans ${metroSignal.minutesUntilClose} min`,
+      implication: `Demande ×${metroSignal.demandMultiplier.toFixed(1)}`,
+      corridor: null,
+      sourceRefs: [{
+        id: 'metro-closing',
+        type: 'transport',
+        label: metroSignal.message,
+        confidence: 1,
+      }],
+    })
+  }
 
   return {
     version: 2,
@@ -720,5 +818,10 @@ export function tonightPackToFlowViewModel(
     // v1.7 extensions
     corridorStatuses,
     fullRamifications,
+    // v1.8 extensions
+    lostOpportunities,
+    metroSignal,
+    shiftArc,
+    swarmStats,
   }
 }
