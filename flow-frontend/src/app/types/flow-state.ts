@@ -84,9 +84,10 @@ export function formatCountdown(sec: number): string {
 export type ZoneStateDisplay = "dormant" | "forming" | "active" | "peak" | "fading";
 
 export function zoneStateApiToDisplay(
-  zoneState: Record<string, ZoneStateApi>
+  zoneState: Record<string, ZoneStateApi> | null | undefined
 ): Record<string, ZoneStateDisplay> {
   const out: Record<string, ZoneStateDisplay> = {};
+  if (!zoneState) return out;
   for (const [id, s] of Object.entries(zoneState)) {
     out[id] =
       s === "hot" ? "active"
@@ -105,9 +106,10 @@ function parseCountdownToSec(mmss: string): number {
 
 /** Map engine ZoneState (dormant/forming/active/peak/fading) to API zoneState (cold/warm/hot/blocked) */
 function engineZoneStateToApi(
-  zoneStates: Record<string, string>
+  zoneStates: Record<string, string> | null | undefined
 ): Record<string, ZoneStateApi> {
   const out: Record<string, ZoneStateApi> = {};
+  if (!zoneStates) return out;
   for (const [id, s] of Object.entries(zoneStates)) {
     out[id] =
       s === "active" || s === "peak" ? "hot"
