@@ -10,6 +10,13 @@
  */
 
 import type { CorridorDirection } from './types'
+import {
+  buildStationReleaseWave,
+  type ForcedMobilityWave,
+  type TransportContext,
+  getWaveDisplayLabel,
+  getWaveRideProfileLabel,
+} from '@/lib/flow-engine/forced-mobility'
 
 // ── Types ──
 
@@ -489,7 +496,9 @@ export function pressureToSignal(pressure: StationPressure): StationSignal {
 
 // ── Main Fetch Function ──
 
-export async function fetchAllStationSignals(): Promise<StationSignal[]> {
+export async function fetchAllStationSignals(
+  transportContext?: TransportContext
+): Promise<StationSignal[]> {
   const stations = await loadStations()
   const signals: StationSignal[] = []
 
@@ -510,6 +519,81 @@ export async function fetchAllStationSignals(): Promise<StationSignal[]> {
   signals.sort((a, b) => b.intensity - a.intensity)
 
   return signals
+}
+
+// ── Forced Mobility Wave Generation ──
+
+export async function fetchStationForcedMobilityWaves(
+  transportContext?: TransportContext
+): Promise<ForcedMobilityWave[]> {
+  const stations = await loadStations()
+  const waves: ForcedMobilityWave[] = []
+
+  for (const station of stations) {
+    try {
+      const arrivals = await fetchStationArrivals(station)
+      const pressure = computeStationPressure(station, arrivals)
+
+      if (pressure && pressure.score >= 25) {
+        const wave = buildStationReleaseWave({
+          stationId: station.id,
+          stationName: station.name,
+          zone: station.flow_zone,
+          corridor: station.corridor,
+          arrivalCount: pressure.arrivalCount,
+          estimatedPassengers: pressure.totalPassengers,
+          hasInternational: pressure.hasInternational,
+          hasDelay: pressure.hasDelay,
+          waveStart: new Date(pressure.windowStart),
+          waveEnd: new Date(pressure.windowEnd),
+          entryHint: station.entry_hint,
+          lat: station.lat,
+          lng: station.lng,
+          transportContext,
+        })
+
+        waves.push(wave)
+      }
+    } catch (err) {
+      console.error(`[SNCF] Error building FM wave for ${station.name}:`, err)
+    }
+  }
+
+  // Sort by final score descending
+  waves.sort((a, b) => b.final_score - a.final_score)
+
+  return waves
+}
+
+// ── Convert Forced Mobility Wave to Station Signal ──
+// Bridge between new FM system and existing signal model
+
+export function forcedMobilityWaveToSignal(wave: ForcedMobilityWave): StationSignal {
+  return {
+    type: 'station_arrival',
+    id: wave.id,
+    stationId: wave.id.replace('fm-station-', '').split('-')[0],
+    stationName: wave.zone,
+    zone: wave.zone,
+    corridor: wave.corridor,
+    window: {
+      start: wave.wave_start,
+      end: wave.wave_end,
+    },
+    intensity: wave.final_score / 100,
+    confidence: wave.confidence === 'high' ? 0.95 : wave.confidence === 'medium' ? 0.75 : 0.5,
+    source: 'sncf_realtime',
+    compiledAt: new Date().toISOString(),
+    ttl: 180,
+    arrivalCount: 0, // Not tracked in FM wave
+    estimatedPassengers: 0,
+    hasInternational: wave.factors.includes('international'),
+    hasDelay: wave.factors.includes('retards'),
+    entryHint: wave.entry_hint || wave.positioning_hint,
+    rideProfile: `${getWaveDisplayLabel(wave)} — ${getWaveRideProfileLabel(wave.likely_ride_profile)}`,
+    lat: wave.lat || 0,
+    lng: wave.lng || 0,
+  }
 }
 
 // ── Cache Layer ──
