@@ -137,6 +137,55 @@ export interface FlowState {
 
   /** Week calendar for SEMAINE screen */
   weekCalendar?: WeekCalendar;
+
+  /** Weekly pulse rhythm for PULSE/RHYTHM display */
+  weeklyPulse?: WeeklyPulse;
+}
+
+// ════════════════════════════════════════════════════════════════
+// WEEKLY PULSE — Predictable daily demand rhythm
+// ════════════════════════════════════════════════════════════════
+
+export type PredictableWaveCategory =
+  | 'morning_station_airport'
+  | 'morning_office'
+  | 'midday_redistribution'
+  | 'evening_office_release'
+  | 'event_exit'
+  | 'late_station_airport'
+  | 'nightlife_closure'
+
+export interface ActiveWave {
+  category: PredictableWaveCategory
+  name: string
+  strength: number
+  minutes_remaining: number
+  core_zones: string[]
+  ride_profile: 'short_fast' | 'mixed' | 'long' | 'premium_long'
+}
+
+export interface UpcomingWave {
+  category: PredictableWaveCategory
+  name: string
+  strength: number
+  minutes_until_start: number
+  typical_start: string
+  core_zones: string[]
+}
+
+export interface WeeklyPulse {
+  /** Current day */
+  day: string
+  /** Currently active waves sorted by strength */
+  active_waves: ActiveWave[]
+  /** Upcoming waves in next 3h sorted by time */
+  upcoming_waves: UpcomingWave[]
+  /** Best window for today */
+  best_window: string
+  /** Expected peak strength for today */
+  peak_strength: number
+  /** Strategic notes for today */
+  strategic_notes: string[]
 }
 
 /** Confidence level as enum string (not numeric) */

@@ -23,6 +23,7 @@ import { tonightPackToCitySignalsPack, isTonightPack } from '@/lib/city-signals/
 import type { FlowState, Ramification, DriverPosition } from '@/types/flow-state'
 import { buildSignalFeed, buildWeekCalendar } from '@/lib/flow-engine/signal-builder'
 import { getStationSignals } from '@/lib/signal-fetchers/sncf'
+import { buildWeeklyPulse } from '@/lib/flow-engine/weekly-pulse-builder'
 import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
 import type { CompiledBrief } from '@/lib/prompts/contracts'
 import type { FlowCard } from '@/types/flow-card'
@@ -386,6 +387,9 @@ export async function GET(request: Request) {
 
     // Build week calendar (for SEMAINE screen)
     flowState.weekCalendar = buildWeekCalendar(weeklySkeleton, flowState.peaks)
+
+    // Build weekly pulse rhythm (for PULSE display)
+    flowState.weeklyPulse = buildWeeklyPulse()
 
     response.depth = flowState
   }
