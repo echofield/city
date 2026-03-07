@@ -460,55 +460,71 @@ export const TERRITORIES: TerritoryDef[] = [
   },
 ];
 
-// ── Banlieue Hubs ──
-// Key suburban pickup/dropoff points at edges of Paris
+// ── Banlieue Strategic Hubs ──
+// Not communes. Pressure poles. Corridor extensions.
 
 export interface BanlieueHub {
   id: string;
   name: string;
   corridor: "nord" | "est" | "sud" | "ouest";
-  edgePos: [number, number]; // SVG position at map edge
+  subtitle: string;
+  /** Position on map edge (SVG coords in 1000x700 viewBox) */
+  edgePos: [number, number];
+  /** Approximate lat/lng */
+  coords: { lat: number; lng: number };
 }
 
 export const BANLIEUE_HUBS: BanlieueHub[] = [
-  // Nord
+  // NORD
   {
     id: "saint-denis",
     name: "Saint-Denis",
     corridor: "nord",
-    edgePos: [400, 102],
+    subtitle: "Stade de France",
+    edgePos: [480, 102],
+    coords: { lat: 48.9362, lng: 2.3574 },
   },
   {
     id: "villepinte",
     name: "Villepinte",
     corridor: "nord",
-    edgePos: [500, 102],
+    subtitle: "Parc des Expositions",
+    edgePos: [560, 102],
+    coords: { lat: 48.9691, lng: 2.5153 },
   },
   {
     id: "cdg",
     name: "CDG",
     corridor: "nord",
-    edgePos: [600, 102],
+    subtitle: "Aeroport",
+    edgePos: [640, 102],
+    coords: { lat: 49.0097, lng: 2.5479 },
   },
-  // Ouest
+  // OUEST
   {
     id: "la-defense",
     name: "La Defense",
     corridor: "ouest",
-    edgePos: [168, 280],
+    subtitle: "Affaires · CNIT",
+    edgePos: [168, 260],
+    coords: { lat: 48.8918, lng: 2.2362 },
   },
-  // Sud
+  // SUD
   {
     id: "orly",
     name: "Orly",
     corridor: "sud",
+    subtitle: "Aeroport",
     edgePos: [500, 640],
+    coords: { lat: 48.7262, lng: 2.3652 },
   },
-  // Est
+  // EST
   {
     id: "montreuil",
     name: "Montreuil",
     corridor: "est",
-    edgePos: [832, 380],
+    subtitle: "Pantin · Vincennes",
+    edgePos: [832, 320],
+    coords: { lat: 48.8638, lng: 2.4433 },
   },
 ];

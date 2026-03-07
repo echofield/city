@@ -2,7 +2,7 @@
 // Green = active. Amber = forming. Gray = dormant.
 // Colors encode meaning. Every glow is information.
 // Tap zone → compact 5-line detail panel.
-// Banlieue hubs as directional indicators at edges.
+// Banlieue hubs as corridor "portes" at edges.
 
 import { useState, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -13,15 +13,6 @@ import {
   BANLIEUE_HUBS,
 } from "./parisData";
 import type { ZoneState, BanlieueHubState } from "./FlowEngine";
-
-// Signal pin type (subset of Signal for map display)
-interface SignalPin {
-  id: string;
-  zone: string;
-  arrondissement?: string;
-  intensity: number;
-  kind: "live" | "nearby" | "alert" | "soon" | "compound";
-}
 
 interface FlowMapProps {
   zoneHeat: Record<string, number>;
@@ -36,16 +27,15 @@ interface FlowMapProps {
   driverPosition?: { lat: number; lng: number } | null;
   driverCorridor?: string;
   banlieueHubs?: Record<string, BanlieueHubState>;
-  signalPins?: SignalPin[];
 }
 
 // ── Color grammar ──
 const C = {
   bg: "#0a0a0b",
-  border: "#2a2a32",
-  borderActive: "#3e3e48",
-  seine: "#0e1420",
-  seineBank: "#253040",
+  border: "#1a1a1e",
+  borderActive: "#2a2a30",
+  seine: "#0c1018",
+  seineBank: "#161e28",
   green: "#00B14F",
   greenDim: "#006830",
   greenGlow: "#00D460",
@@ -81,11 +71,10 @@ function getZoneColor(
 }
 
 function getHubColor(status: BanlieueHubState["status"]): string {
-  // Banlieue hubs are always return magnets - show green
   switch (status) {
     case "active": return C.green;
-    case "forming": return C.greenDim; // Green instead of amber
-    case "dormant": return C.greenDim; // Always visible as return magnet
+    case "forming": return C.amber;
+    case "dormant": return C.textGhost;
   }
 }
 
@@ -117,7 +106,7 @@ function buildBridgeLines(): {
   return lines;
 }
 
-// ── Zone axe mapping ──
+// ── Zone corridor mapping ──
 function getZoneCorridor(zoneId: string): string {
   const corridorMap: Record<string, string> = {
     "1": "Centre", "2": "Centre", "cite": "Centre", "stlouis": "Centre",
@@ -129,32 +118,12 @@ function getZoneCorridor(zoneId: string): string {
   return corridorMap[zoneId] ?? "—";
 }
 
-// ── Signal pin positioning ──
-function getSignalPinPosition(pin: SignalPin): [number, number] | null {
-  // Extract arrondissement number
-  const arr = pin.arrondissement?.replace(/\D/g, "") || "";
-  const territory = TERRITORIES.find((t) => t.id === arr);
-  if (territory) {
-    // Offset slightly from center to avoid overlap
-    const offset = (parseInt(pin.id, 36) % 10) * 3 - 15;
-    return [territory.center[0] + offset, territory.center[1] + offset];
-  }
-  return null;
-}
-
-function getSignalPinColor(pin: SignalPin): string {
-  if (pin.kind === "alert") return C.amber;
-  if (pin.intensity >= 3) return C.greenGlow;
-  if (pin.intensity >= 2) return C.green;
-  return C.greenDim;
-}
-
 function getZoneStateLabel(state: ZoneState): string {
   switch (state) {
-    case "peak": return "pic";
-    case "active": return "chaud";
-    case "forming": return "formation";
-    case "fading": return "tiede";
+    case "peak": return "plein";
+    case "active": return "ca bouge";
+    case "forming": return "ca arrive";
+    case "fading": return "ca retombe";
     case "dormant": return "calme";
   }
 }
@@ -174,7 +143,6 @@ export function FlowMap({
   driverPosition,
   driverCorridor,
   banlieueHubs,
-  signalPins = [],
 }: FlowMapProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [tappedId, setTappedId] = useState<string | null>(null);
@@ -196,6 +164,7 @@ export function FlowMap({
       onZoneTap(id);
       return;
     }
+    // Toggle zone detail panel
     setTappedId((prev) => (prev === id ? null : id));
   }, [onZoneTap]);
 
@@ -203,6 +172,7 @@ export function FlowMap({
     <div
       className="w-full h-full relative flex items-center justify-center overflow-hidden"
       onClick={(e) => {
+        // Click on background = close panel
         if ((e.target as HTMLElement).tagName === "DIV") setTappedId(null);
       }}
     >
@@ -235,27 +205,27 @@ export function FlowMap({
         {/* Peripherique */}
         <ellipse
           cx="500" cy="380" rx="290" ry="265"
-          fill="none" stroke="#252530" strokeWidth="0.8"
-          opacity={0.5 + breathPhase * 0.1}
-          strokeDasharray="4,5"
+          fill="none" stroke="#181820" strokeWidth="0.5"
+          opacity={0.35 + breathPhase * 0.08}
+          strokeDasharray="3,6"
         />
 
         {/* Seine */}
         <path d={seinePath} fill={C.seine} opacity={seineOpacity} style={{ transition: "opacity 0.6s ease" }} />
         <polyline
           points={SEINE_NORTH.map((p) => p.join(",")).join(" ")}
-          fill="none" stroke={C.seineBank} strokeWidth="1.2" opacity={0.55 + breathPhase * 0.12}
+          fill="none" stroke={C.seineBank} strokeWidth="0.7" opacity={0.4 + breathPhase * 0.1}
         />
         <polyline
           points={SEINE_SOUTH.map((p) => p.join(",")).join(" ")}
-          fill="none" stroke={C.seineBank} strokeWidth="1.2" opacity={0.55 + breathPhase * 0.12}
+          fill="none" stroke={C.seineBank} strokeWidth="0.7" opacity={0.4 + breathPhase * 0.1}
         />
 
         {/* Bridges */}
         {bridges.map((br) => (
           <line
             key={br.key} x1={br.x1} y1={br.y1} x2={br.x2} y2={br.y2}
-            stroke="#22222e" strokeWidth={0.6} opacity={0.25 + breathPhase * 0.08}
+            stroke="#1a1a22" strokeWidth={0.4} opacity={0.15 + breathPhase * 0.05}
             strokeDasharray="2,3"
           />
         ))}
@@ -277,12 +247,12 @@ export function FlowMap({
             isSelected || isTapped
               ? C.green
               : state === "active" || state === "peak"
-                ? "#6aa070"
+                ? "#5a8a60"
                 : state === "forming"
-                  ? "#9a8a55"
+                  ? "#8a7a50"
                   : isHovered
-                    ? "#555560"
-                    : "#35353e";
+                    ? "#4a4a50"
+                    : "#222228";
 
           return (
             <g key={t.id}>
@@ -297,7 +267,7 @@ export function FlowMap({
               <path
                 d={t.path} fill="transparent"
                 stroke={isSelected || isTapped ? C.green : isHovered ? C.borderActive : C.border}
-                strokeWidth={isSelected || isTapped ? 1.5 : isHovered ? 1 : 0.6}
+                strokeWidth={isSelected || isTapped ? 1.2 : isHovered ? 0.8 : 0.35}
                 style={{
                   cursor: "pointer",
                   transition: "stroke 0.3s ease, stroke-width 0.3s ease",
@@ -313,8 +283,8 @@ export function FlowMap({
                 style={{
                   fontFamily: "'Inter', sans-serif",
                   fontSize: t.id === "cite" || t.id === "stlouis" ? smallLabelSize : labelSize,
-                  fontWeight: 500, pointerEvents: "none",
-                  transition: "fill 0.5s ease", letterSpacing: "0.06em",
+                  fontWeight: 400, pointerEvents: "none",
+                  transition: "fill 0.5s ease", letterSpacing: "0.05em",
                 }}
               >
                 {t.displayName}
@@ -329,126 +299,39 @@ export function FlowMap({
           );
         })}
 
-        {/* Signal pins - sparse, top 3 only */}
-        {signalPins.slice(0, 3).map((pin, i) => {
-          const pos = getSignalPinPosition(pin);
-          if (!pos) return null;
-          const [px, py] = pos;
-          const color = getSignalPinColor(pin);
-          const size = pin.intensity >= 3 ? 7 : 5;
-          const isTop = i === 0;
-
-          return (
-            <g key={pin.id}>
-              {/* Pulse ring for top signal */}
-              {isTop && (
-                <circle
-                  cx={px} cy={py}
-                  r={size + 4 + breathPhase * 3}
-                  fill="none"
-                  stroke={color}
-                  strokeWidth={0.8}
-                  opacity={0.3 + breathPhase * 0.2}
-                />
-              )}
-              {/* Pin dot */}
-              <circle
-                cx={px} cy={py}
-                r={size}
-                fill={color}
-                opacity={0.9}
-                filter={pin.intensity >= 3 ? "url(#fglow)" : undefined}
-              />
-              {/* Inner highlight */}
-              <circle
-                cx={px} cy={py}
-                r={size * 0.4}
-                fill="#ffffff"
-                opacity={0.5}
-              />
-            </g>
-          );
-        })}
-
         {/* Center meridian */}
-        <line x1="500" y1="115" x2="500" y2="630" stroke="#1a1a22" strokeWidth="0.4" opacity={0.18} strokeDasharray="3,7" />
+        <line x1="500" y1="115" x2="500" y2="630" stroke="#151518" strokeWidth="0.3" opacity={0.12} strokeDasharray="3,7" />
 
-        {/* Axe direction labels */}
-        <text x="500" y="108" textAnchor="middle" fill="#4a4a55" style={{ fontFamily: "'Inter', sans-serif", fontSize: "9px", fontWeight: 500, letterSpacing: "0.3em" }}>NORD</text>
-        <text x="500" y="648" textAnchor="middle" fill="#4a4a55" style={{ fontFamily: "'Inter', sans-serif", fontSize: "9px", fontWeight: 500, letterSpacing: "0.3em" }}>SUD</text>
-        <text x="165" y="375" textAnchor="middle" fill="#4a4a55" style={{ fontFamily: "'Inter', sans-serif", fontSize: "9px", fontWeight: 500, letterSpacing: "0.3em" }} transform="rotate(-90, 165, 375)">OUEST</text>
-        <text x="835" y="375" textAnchor="middle" fill="#4a4a55" style={{ fontFamily: "'Inter', sans-serif", fontSize: "9px", fontWeight: 500, letterSpacing: "0.3em" }} transform="rotate(90, 835, 375)">EST</text>
+        {/* Corridor direction labels */}
+        <text x="500" y="108" textAnchor="middle" fill="#1a1a20" style={{ fontFamily: "'Inter', sans-serif", fontSize: "8px", fontWeight: 400, letterSpacing: "0.25em" }}>NORD</text>
+        <text x="500" y="648" textAnchor="middle" fill="#1a1a20" style={{ fontFamily: "'Inter', sans-serif", fontSize: "8px", fontWeight: 400, letterSpacing: "0.25em" }}>SUD</text>
+        <text x="165" y="375" textAnchor="middle" fill="#1a1a20" style={{ fontFamily: "'Inter', sans-serif", fontSize: "8px", fontWeight: 400, letterSpacing: "0.25em" }} transform="rotate(-90, 165, 375)">OUEST</text>
+        <text x="835" y="375" textAnchor="middle" fill="#1a1a20" style={{ fontFamily: "'Inter', sans-serif", fontSize: "8px", fontWeight: 400, letterSpacing: "0.25em" }} transform="rotate(90, 835, 375)">EST</text>
 
         {/* ── Banlieue Hub Indicators ── */}
         {BANLIEUE_HUBS.map((hub) => {
           const hubState = banlieueHubs?.[hub.id];
-          const color = hubState ? getHubColor(hubState.status) : C.greenDim; // Always green (return magnet)
+          const color = hubState ? getHubColor(hubState.status) : C.textGhost;
           const isActive = hubState?.status === "active";
-          const isForming = hubState?.status === "forming";
           const [hx, hy] = hub.edgePos;
 
+          // Determine text anchor based on corridor position
           const isVert = hub.corridor === "nord" || hub.corridor === "sud";
           const anchor = isVert ? "middle" : hub.corridor === "ouest" ? "start" : "end";
-          const textX = isVert ? hx : hub.corridor === "ouest" ? hx + 14 : hx - 14;
-          const textY = isVert ? (hub.corridor === "nord" ? hy - 10 : hy + 12) : hy;
-
-          // Corridor label position
-          const corridorLabel = hub.corridor.toUpperCase();
-          const corridorY = isVert
-            ? (hub.corridor === "nord" ? textY - 10 : textY + 10)
-            : textY + 10;
-
-          // Time position (above name if showing)
-          const timeY = isVert
-            ? (hub.corridor === "nord" ? textY + 10 : textY - 10)
-            : textY - 10;
+          const textX = isVert ? hx : hub.corridor === "ouest" ? hx + 12 : hx - 12;
+          const textY = isVert ? (hub.corridor === "nord" ? hy - 8 : hy + 10) : hy;
 
           return (
             <g key={hub.id}>
-              {/* Outer glow ring for active hubs */}
+              {/* Hub dot */}
+              <circle cx={hx} cy={hy} r={isActive ? 3.5 : 2} fill={color} opacity={isActive ? 0.8 : 0.4} />
               {isActive && (
-                <>
-                  <circle
-                    cx={hx} cy={hy} r={12}
-                    fill="none" stroke={color} strokeWidth={0.4}
-                    opacity={0.15 + breathPhase * 0.1}
-                  />
-                  <circle
-                    cx={hx} cy={hy} r={8}
-                    fill="none" stroke={color} strokeWidth={0.6}
-                    opacity={0.3 + breathPhase * 0.2}
-                  />
-                </>
+                <circle
+                  cx={hx} cy={hy} r={6}
+                  fill="none" stroke={color} strokeWidth={0.5}
+                  opacity={0.3 + breathPhase * 0.2}
+                />
               )}
-              {/* Inner dot */}
-              <circle
-                cx={hx} cy={hy}
-                r={isActive ? 5 : isForming ? 3.5 : 2.5}
-                fill={color}
-                opacity={isActive ? 0.95 : isForming ? 0.75 : 0.6}
-                filter={isActive ? "url(#fglow)" : undefined}
-              />
-              {isActive && (
-                <circle cx={hx} cy={hy} r={2} fill="#ffffff" opacity={0.6} />
-              )}
-
-              {/* Corridor label (small, dim) */}
-              <text
-                x={textX} y={corridorY}
-                textAnchor={anchor}
-                dominantBaseline="central"
-                fill={isActive ? color : C.textGhost}
-                style={{
-                  fontFamily: "'Inter', sans-serif",
-                  fontSize: "5px",
-                  fontWeight: 400,
-                  letterSpacing: "0.25em",
-                  opacity: isActive ? 0.8 : 0.4,
-                }}
-              >
-                {corridorLabel}
-              </text>
-
               {/* Hub name */}
               <text
                 x={textX} y={textY}
@@ -457,29 +340,28 @@ export function FlowMap({
                 fill={color}
                 style={{
                   fontFamily: "'Inter', sans-serif",
-                  fontSize: isActive ? "8px" : "7px",
-                  fontWeight: isActive ? 600 : 500,
+                  fontSize: "6.5px",
+                  fontWeight: 400,
                   letterSpacing: "0.1em",
-                  opacity: isActive ? 1 : 0.5,
-                  transition: "all 0.5s ease",
+                  opacity: isActive ? 0.9 : 0.35,
+                  transition: "opacity 0.5s ease",
                 }}
               >
                 {hub.name.toUpperCase()}
               </text>
-
-              {/* Time indicator (when available) */}
-              {hubState?.nextPic && (isActive || isForming) && (
+              {/* Next pic time for active hubs */}
+              {hubState?.nextPic && isActive && (
                 <text
                   x={textX}
-                  y={timeY}
+                  y={textY + (isVert ? (hub.corridor === "nord" ? -7 : 8) : 8)}
                   textAnchor={anchor}
                   dominantBaseline="central"
                   fill={color}
                   style={{
                     fontFamily: "'JetBrains Mono', monospace",
-                    fontSize: "6px",
+                    fontSize: "5px",
                     fontWeight: 400,
-                    opacity: isActive ? 0.9 : 0.6,
+                    opacity: 0.6,
                   }}
                 >
                   {hubState.nextPic}
@@ -522,6 +404,7 @@ export function FlowMap({
                 borderRadius: "3px",
               }}
             >
+              {/* Zone name + arr */}
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-baseline gap-2">
                   <span
@@ -562,6 +445,7 @@ export function FlowMap({
                 </button>
               </div>
 
+              {/* 5 data lines */}
               {[
                 {
                   label: "Etat",
@@ -573,8 +457,8 @@ export function FlowMap({
                       : C.textDim,
                 },
                 {
-                  label: "Saturation",
-                  value: `${zoneSaturation[tapped.id] ?? 0}`,
+                  label: "Densite",
+                  value: `${zoneSaturation[tapped.id] ?? 0}%`,
                   color: (zoneSaturation[tapped.id] ?? 0) > 65
                     ? C.red
                     : (zoneSaturation[tapped.id] ?? 0) > 40
@@ -582,7 +466,7 @@ export function FlowMap({
                       : C.textMid,
                 },
                 {
-                  label: "Axe",
+                  label: "Corridor",
                   value: getZoneCorridor(tapped.id),
                   color: C.textMid,
                 },
@@ -590,11 +474,6 @@ export function FlowMap({
                   label: "Intensite",
                   value: `${Math.round((zoneHeat[tapped.id] ?? 0) * 100)}%`,
                   color: (zoneHeat[tapped.id] ?? 0) > 0.5 ? C.green : (zoneHeat[tapped.id] ?? 0) > 0.2 ? C.amber : C.textDim,
-                },
-                {
-                  label: "Densite",
-                  value: `${Math.round(tapped.density * 100)}%`,
-                  color: C.textDim,
                 },
               ].map((row) => (
                 <div key={row.label} className="flex items-center justify-between py-0.5">
@@ -626,7 +505,7 @@ export function FlowMap({
         )}
       </AnimatePresence>
 
-      {/* ── Hover tooltip ── */}
+      {/* ── Hover tooltip (only when no tap panel open) ── */}
       <AnimatePresence>
         {hovered && !tapped && (
           <motion.div
@@ -682,7 +561,7 @@ export function FlowMap({
                         color: (zoneSaturation[hovered.id] ?? 0) > 65 ? C.red : C.textDim,
                       }}
                     >
-                      sat {zoneSaturation[hovered.id]}%
+                      dense {zoneSaturation[hovered.id]}%
                     </span>
                   )}
                 </div>

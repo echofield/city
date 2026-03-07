@@ -1,130 +1,152 @@
-// FLOW — 15-Second Onboarding
-// 4 questions. Tap tap tap tap. LIVE.
-// Driver feels immediately understood.
-// Map stays visible in background — city reading starts immediately.
+// FLOW v1.6 — Reactive Onboarding
+// The system is alive from the first tap.
+// 2 steps: Shift type + Anchor pick. Map reacts immediately.
+// Anchor model replaces arrondissement selection.
+// No "champ", no system words.
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useNavigate } from "react-router";
-import { C, label, mono } from "./theme";
 import { FlowMap } from "./FlowMap";
+import { TERRITORIES } from "./parisData";
+import { ANCHOR_OPTIONS, type DriverAnchor } from "./FlowEngine";
+import { C, label, mono, heading } from "./theme";
+import type { ZoneState } from "./FlowEngine";
 
-// ── Types ──
+// -- Types --
 
-type TimePreference = "jour" | "soir" | "nuit_profonde";
-type DrivingStyle = "attendre" | "chasser" | "equilibre";
-type SessionGoal = "100" | "200" | "300" | "max";
-type Corridor = "centre" | "nord" | "ouest" | "est" | "sud";
-type Hub = "cdg" | "orly" | "defense" | "gare_nord" | "montparnasse";
+type ShiftType = "jour" | "nuit" | "nuit_profonde";
 
 interface OnboardingState {
-  step: number; // 1-4, then 5 = confirmation
-  zones: Corridor[];
-  hubs: Hub[];
-  timePreference: TimePreference | null;
-  style: DrivingStyle | null;
-  goal: SessionGoal | null;
+  step: number; // 0, 1
+  shiftType: ShiftType | null;
+  anchor: DriverAnchor | null;
 }
 
-// ── Constants ──
+// -- Simulated map state based on onboarding choices --
 
-const CORRIDORS: { id: Corridor; label: string }[] = [
-  { id: "centre", label: "Centre" },
-  { id: "nord", label: "Nord" },
-  { id: "ouest", label: "Ouest" },
-  { id: "est", label: "Est" },
-  { id: "sud", label: "Sud" },
+const CORRIDOR_ZONES: Record<string, string[]> = {
+  nord: ["9", "10", "17", "18", "19"],
+  est: ["3", "4", "11", "12", "20"],
+  sud: ["5", "6", "13", "14"],
+  ouest: ["7", "8", "15", "16"],
+  centre: ["1", "2", "cite", "stlouis"],
+};
+
+function buildOnboardingHeat(
+  shiftType: ShiftType | null,
+  anchor: DriverAnchor | null,
+  breathPhase: number
+): {
+  zoneHeat: Record<string, number>;
+  zoneStates: Record<string, ZoneState>;
+  zoneSaturation: Record<string, number>;
+  favoredZoneIds: string[];
+} {
+  const zoneHeat: Record<string, number> = {};
+  const zoneStates: Record<string, ZoneState> = {};
+  const zoneSaturation: Record<string, number> = {};
+
+  const nightZones = new Set(["11", "18", "9", "10", "3", "4", "20"]);
+  const dayZones = new Set(["8", "16", "1", "7", "6", "2", "9"]);
+  const deepNightZones = new Set(["18", "11", "20", "10", "19", "3"]);
+
+  const activeSet =
+    shiftType === "nuit_profonde"
+      ? deepNightZones
+      : shiftType === "nuit"
+        ? nightZones
+        : shiftType === "jour"
+          ? dayZones
+          : new Set<string>();
+
+  // Anchor corridor zones get boosted
+  const anchorZones = new Set(anchor ? (CORRIDOR_ZONES[anchor.corridor] ?? []) : []);
+
+  const favoredZoneIds: string[] = [];
+
+  for (const t of TERRITORIES) {
+    const isActive = activeSet.has(t.id);
+    const isAnchorZone = anchorZones.has(t.id);
+
+    let heat = 0;
+    if (isAnchorZone && isActive) {
+      heat = 0.55 + breathPhase * 0.15;
+      favoredZoneIds.push(t.id);
+    } else if (isAnchorZone) {
+      heat = 0.25 + breathPhase * 0.08;
+      favoredZoneIds.push(t.id);
+    } else if (isActive) {
+      heat = 0.12 + breathPhase * 0.06;
+    } else {
+      heat = 0.02;
+    }
+
+    zoneHeat[t.id] = heat;
+    zoneStates[t.id] = isAnchorZone && isActive
+      ? "active"
+      : isAnchorZone
+        ? "forming"
+        : isActive
+          ? "fading"
+          : "dormant";
+    zoneSaturation[t.id] = 0;
+  }
+
+  return { zoneHeat, zoneStates, zoneSaturation, favoredZoneIds };
+}
+
+// -- Step titles --
+
+const STEP_TITLES = ["Quand", "Ou"];
+const STEP_SUBS = [
+  "FLOW s'adapte a ton rythme.",
+  "Choisis ton point de depart.",
 ];
 
-const HUBS: { id: Hub; label: string }[] = [
-  { id: "cdg", label: "CDG" },
-  { id: "orly", label: "Orly" },
-  { id: "defense", label: "La Defense" },
-  { id: "gare_nord", label: "Gare du Nord" },
-  { id: "montparnasse", label: "Montparnasse" },
-];
-
-const TIME_OPTIONS: { id: TimePreference; label: string; sub: string; desc: string }[] = [
-  { id: "jour", label: "JOUR", sub: "06h – 18h", desc: "Aeroports, gares, affaires" },
-  { id: "soir", label: "SOIR", sub: "18h – 00h", desc: "Restaurants, concerts" },
-  { id: "nuit_profonde", label: "NUIT PROFONDE", sub: "00h – 06h", desc: "Clubs, sorties tardives" },
-];
-
-const STYLE_OPTIONS: { id: DrivingStyle; label: string; desc: string }[] = [
-  { id: "attendre", label: "ATTENDRE", desc: "Position fixe. Courses longues." },
-  { id: "chasser", label: "CHASSER", desc: "Bouger souvent. Suivre les pics." },
-  { id: "equilibre", label: "EQUILIBRE", desc: "Attente + mouvement." },
-];
-
-const GOAL_OPTIONS: { id: SessionGoal; label: string }[] = [
-  { id: "100", label: "100 EUR" },
-  { id: "200", label: "200 EUR" },
-  { id: "300", label: "300 EUR" },
-  { id: "max", label: "Maximiser la nuit" },
-];
-
-// ── Main Component ──
+// -- Main component --
 
 export function Onboarding() {
   const navigate = useNavigate();
   const [state, setState] = useState<OnboardingState>({
-    step: 1,
-    zones: [],
-    hubs: [],
-    timePreference: null,
-    style: null,
-    goal: null,
+    step: 0,
+    shiftType: null,
+    anchor: null,
   });
-  const [showIntro, setShowIntro] = useState(true);
+  const [breathPhase, setBreathPhase] = useState(0);
+  const [entering, setEntering] = useState(true);
+  const animRef = useRef(0);
 
-  // Intro splash (1.5s)
   useEffect(() => {
-    if (showIntro) {
-      const timer = setTimeout(() => setShowIntro(false), 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [showIntro]);
+    let t = 0;
+    const tick = () => {
+      t += 0.012;
+      setBreathPhase(Math.sin(t) * 0.5 + 0.5);
+      animRef.current = requestAnimationFrame(tick);
+    };
+    animRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animRef.current);
+  }, []);
 
-  // Toggle zone selection
-  const toggleZone = (zone: Corridor) => {
-    setState((prev) => ({
-      ...prev,
-      zones: prev.zones.includes(zone)
-        ? prev.zones.filter((z) => z !== zone)
-        : [...prev.zones, zone],
-    }));
-  };
+  // Intro animation
+  useEffect(() => {
+    const timer = setTimeout(() => setEntering(false), 2200);
+    return () => clearTimeout(timer);
+  }, []);
 
-  // Toggle hub selection
-  const toggleHub = (hub: Hub) => {
-    setState((prev) => ({
-      ...prev,
-      hubs: prev.hubs.includes(hub)
-        ? prev.hubs.filter((h) => h !== hub)
-        : [...prev.hubs, hub],
-    }));
-  };
+  const mapData = buildOnboardingHeat(state.shiftType, state.anchor, breathPhase);
 
-  // Can advance to next step?
   const canAdvance =
-    (state.step === 1 && state.zones.length > 0) ||
-    (state.step === 2 && state.timePreference !== null) ||
-    (state.step === 3 && state.style !== null) ||
-    (state.step === 4 && state.goal !== null) ||
-    state.step === 5;
+    (state.step === 0 && state.shiftType !== null) ||
+    (state.step === 1 && state.anchor !== null);
 
-  // Advance to next step
   const advance = () => {
-    if (state.step < 5) {
+    if (state.step < 1) {
       setState((prev) => ({ ...prev, step: prev.step + 1 }));
     } else {
-      // Save preferences and navigate to LIVE
       const prefs = {
-        zones: state.zones,
-        hubs: state.hubs,
-        timePreference: state.timePreference,
-        style: state.style,
-        goal: state.goal,
+        shiftType: state.shiftType,
+        anchorId: state.anchor?.id,
         startedAt: Date.now(),
       };
       sessionStorage.setItem("flow-prefs", JSON.stringify(prefs));
@@ -132,534 +154,350 @@ export function Onboarding() {
     }
   };
 
-  // ── Intro Splash ──
-  if (showIntro) {
-    return (
-      <motion.div
-        className="h-screen w-screen flex flex-col items-center justify-center"
-        style={{ backgroundColor: C.bg }}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.4 }}
-      >
-        <motion.div
-          className="flex flex-col items-center gap-3"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2, duration: 0.5 }}
-        >
-          <h1
-            className="uppercase tracking-[0.5em] text-xl"
-            style={{
-              fontFamily: "'Inter', sans-serif",
-              fontWeight: 300,
-              color: C.text,
-            }}
-          >
-            FLOW
-          </h1>
-          <p
-            style={{
-              ...label,
-              fontSize: "0.85rem",
-              color: C.textDim,
-            }}
-          >
-            Calibration rapide
-          </p>
-        </motion.div>
-      </motion.div>
-    );
-  }
+  const goBack = () => {
+    if (state.step > 0) {
+      setState((prev) => ({ ...prev, step: prev.step - 1 }));
+    }
+  };
 
-  // ── Confirmation Screen (Step 5) ──
-  if (state.step === 5) {
-    return (
-      <div
-        className="h-screen w-screen relative overflow-hidden"
-        style={{ backgroundColor: C.bg }}
-      >
-        {/* Background Map — more visible on confirmation */}
-        <div className="absolute inset-0 opacity-40">
-          <FlowMap
-            zoneHeat={{}}
-            zoneStates={{}}
-            zoneSaturation={{}}
-            favoredZoneIds={state.zones}
-            breathPhase={0}
-            windowState="stable"
-          />
-        </div>
-
-        {/* Gradient overlay */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background: `linear-gradient(to bottom, ${C.bg}dd 0%, ${C.bg}cc 50%, ${C.bg}ee 100%)`,
-          }}
-        />
-
-        <motion.div
-          className="relative z-10 h-full flex flex-col items-center justify-center px-6"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3 }}
-        >
-          <motion.div
-            className="flex flex-col items-center gap-6 max-w-sm w-full"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1, duration: 0.4 }}
-          >
-          <h1
-            style={{
-              fontFamily: "'Cormorant Garamond', serif",
-              fontSize: "1.8rem",
-              fontWeight: 300,
-              color: C.text,
-              textAlign: "center",
-            }}
-          >
-            Flow calibre pour :
-          </h1>
-
-          {/* Calibration summary */}
-          <div className="flex flex-col gap-2 w-full">
-            {/* Time */}
-            <div className="flex items-center gap-2">
-              <span style={{ color: C.green, fontSize: "0.9rem" }}>✓</span>
-              <span style={{ ...label, fontSize: "0.85rem", color: C.text }}>
-                {state.timePreference === "jour" ? "Jour" :
-                 state.timePreference === "soir" ? "Soir" : "Nuit profonde"}
-              </span>
-            </div>
-            {/* Style */}
-            <div className="flex items-center gap-2">
-              <span style={{ color: C.green, fontSize: "0.9rem" }}>✓</span>
-              <span style={{ ...label, fontSize: "0.85rem", color: C.text }}>
-                Style : {state.style === "attendre" ? "Attendre" :
-                        state.style === "chasser" ? "Chasser" : "Equilibre"}
-              </span>
-            </div>
-            {/* Zones */}
-            <div className="flex items-center gap-2">
-              <span style={{ color: C.green, fontSize: "0.9rem" }}>✓</span>
-              <span style={{ ...label, fontSize: "0.85rem", color: C.text }}>
-                Zones : {[...state.zones.map(z => z.charAt(0).toUpperCase() + z.slice(1)),
-                          ...state.hubs.map(h => HUBS.find(x => x.id === h)?.label || h)].join(" / ")}
-              </span>
-            </div>
-            {/* Goal */}
-            <div className="flex items-center gap-2">
-              <span style={{ color: C.green, fontSize: "0.9rem" }}>✓</span>
-              <span style={{ ...label, fontSize: "0.85rem", color: C.text }}>
-                Objectif : {state.goal === "max" ? "Maximiser" : `${state.goal} EUR`}
-              </span>
-            </div>
-          </div>
-
-          {/* Launch button */}
-          <button
-            onClick={advance}
-            className="w-full py-4 uppercase tracking-[0.2em] mt-4"
-            style={{
-              ...label,
-              fontSize: "0.8rem",
-              fontWeight: 500,
-              color: C.bg,
-              backgroundColor: C.green,
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-            }}
-          >
-            LANCER FLOW
-          </button>
-
-          <p
-            style={{
-              ...label,
-              fontSize: "0.7rem",
-              color: C.textGhost,
-              textAlign: "center",
-            }}
-          >
-            Lecture du champ en cours...
-          </p>
-        </motion.div>
-        </motion.div>
-      </div>
-    );
-  }
-
-  // ── Question Screens (Steps 1-4) ──
   return (
     <div
-      className="h-screen w-screen relative overflow-hidden"
+      className="h-screen w-screen flex flex-col lg:flex-row overflow-hidden relative"
       style={{ backgroundColor: C.bg, color: C.text }}
     >
-      {/* Background Map — city visible while answering */}
-      <div className="absolute inset-0 opacity-30">
+      {/* Intro overlay */}
+      <AnimatePresence>
+        {entering && (
+          <motion.div
+            className="absolute inset-0 z-50 flex flex-col items-center justify-center"
+            style={{ backgroundColor: C.bg }}
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.8, ease: "easeInOut" }}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.3 }}
+              className="flex flex-col items-center gap-3"
+            >
+              <span
+                className="uppercase tracking-[0.4em]"
+                style={{ ...label, fontSize: "0.6rem", color: C.textDim }}
+              >
+                FLOW
+              </span>
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: 40 }}
+                transition={{ duration: 1, delay: 0.6, ease: "easeOut" }}
+                style={{ height: 1, backgroundColor: C.green }}
+              />
+              <motion.span
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 1.2, duration: 0.6 }}
+                style={{
+                  ...label,
+                  fontSize: "0.65rem",
+                  color: C.textDim,
+                  fontWeight: 300,
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Sais ou aller. Avant les autres.
+              </motion.span>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Map -- always visible, always alive */}
+      <motion.div
+        className="h-[42vh] lg:h-full lg:flex-[1.2] shrink-0 lg:shrink relative"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: entering ? 0.15 : 1 }}
+        transition={{ duration: 0.8 }}
+      >
         <FlowMap
-          zoneHeat={{}}
-          zoneStates={{}}
-          zoneSaturation={{}}
-          favoredZoneIds={state.zones}
-          breathPhase={0}
+          zoneHeat={mapData.zoneHeat}
+          zoneStates={mapData.zoneStates}
+          zoneSaturation={mapData.zoneSaturation}
+          favoredZoneIds={mapData.favoredZoneIds}
+          breathPhase={breathPhase}
           windowState="stable"
         />
-      </div>
 
-      {/* Gradient overlay for readability */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background: `linear-gradient(to bottom, ${C.bg}ee 0%, ${C.bg}dd 40%, ${C.bg}cc 100%)`,
-        }}
-      />
-
-      {/* Questions overlay */}
-      <div className="relative z-10 h-full flex flex-col items-center justify-center px-6">
-        <div className="flex flex-col gap-6 max-w-sm w-full">
-        {/* Progress indicator */}
-        <div className="flex items-center justify-center gap-2">
-          <span
-            style={{
-              ...mono,
-              fontSize: "0.7rem",
-              color: C.textDim,
-            }}
-          >
-            {state.step} / 4
-          </span>
+        {/* Step progress */}
+        <div className="absolute top-4 left-4 flex items-center gap-3">
+          {[0, 1].map((i) => (
+            <div key={i} className="flex items-center gap-2">
+              <div
+                style={{
+                  width: state.step === i ? 24 : 6,
+                  height: 2,
+                  borderRadius: 1,
+                  backgroundColor:
+                    state.step === i ? C.green : i < state.step ? C.textDim : C.textGhost,
+                  transition: "all 0.5s ease",
+                }}
+              />
+              {state.step === i && (
+                <motion.span
+                  initial={{ opacity: 0, x: -4 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  style={{ ...mono, fontSize: "0.5rem", color: C.textDim }}
+                >
+                  {i + 1}/2
+                </motion.span>
+              )}
+            </div>
+          ))}
         </div>
 
-        <AnimatePresence mode="wait">
-          {/* ── Q1: Où travailles-tu ? ── */}
-          {state.step === 1 && (
-            <motion.div
-              key="q1"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.2 }}
-              className="flex flex-col gap-5"
+        {/* Anchor badge on map */}
+        {state.anchor && (
+          <motion.div
+            className="absolute top-4 right-4"
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+          >
+            <div
+              className="px-2.5 py-1 flex items-center gap-1.5"
+              style={{
+                backgroundColor: "rgba(10, 10, 11, 0.85)",
+                border: `1px solid ${C.greenDim}`,
+                borderRadius: 3,
+              }}
             >
-              <div className="flex flex-col gap-1 text-center">
-                <h1
-                  style={{
-                    fontFamily: "'Cormorant Garamond', serif",
-                    fontSize: "1.6rem",
-                    fontWeight: 300,
-                    color: C.text,
-                    margin: 0,
-                  }}
-                >
-                  Ou travailles-tu le plus ?
-                </h1>
-                <p style={{ ...label, fontSize: "0.7rem", color: C.textDim }}>
-                  Selectionne tes zones principales.
-                </p>
-              </div>
+              <div style={{ width: 4, height: 4, borderRadius: "50%", backgroundColor: C.green }} />
+              <span style={{ ...label, fontSize: "0.55rem", color: C.green }}>
+                {state.anchor.label}
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </motion.div>
 
-              {/* Corridors - main zones */}
-              <div className="flex flex-wrap gap-2 justify-center">
-                {CORRIDORS.map((corridor) => {
-                  const selected = state.zones.includes(corridor.id);
-                  return (
-                    <button
-                      key={corridor.id}
-                      onClick={() => toggleZone(corridor.id)}
-                      className="px-4 py-2.5"
-                      style={{
-                        backgroundColor: selected ? `${C.green}15` : C.surface,
-                        border: `1px solid ${selected ? C.green : C.border}`,
-                        borderRadius: 4,
-                        cursor: "pointer",
-                        transition: "all 0.15s ease",
-                      }}
-                    >
-                      <span
-                        style={{
-                          ...label,
-                          fontSize: "0.8rem",
-                          fontWeight: selected ? 500 : 400,
-                          color: selected ? C.green : C.text,
-                        }}
-                      >
-                        {corridor.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+      {/* Panel */}
+      <div
+        className="flex-1 flex flex-col min-h-0 lg:max-w-[480px] lg:border-l overflow-hidden"
+        style={{ borderColor: C.border }}
+      >
+        <div className="flex-1 overflow-y-auto px-5 sm:px-8 py-6 sm:py-10 flex flex-col">
+          <AnimatePresence mode="wait">
+            {/* -- Step 0: Shift type -- */}
+            {state.step === 0 && (
+              <motion.div
+                key="step0"
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 12 }}
+                transition={{ duration: 0.25 }}
+                className="flex flex-col gap-6 flex-1"
+              >
+                <StepHeader title={STEP_TITLES[0]} sub={STEP_SUBS[0]} />
 
-              {/* Hubs - optional */}
-              <div className="flex flex-col gap-2">
-                <span
-                  style={{
-                    ...label,
-                    fontSize: "0.6rem",
-                    color: C.textGhost,
-                    textAlign: "center",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.1em",
-                  }}
-                >
-                  Optionnel
-                </span>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  {HUBS.map((hub) => {
-                    const selected = state.hubs.includes(hub.id);
-                    return (
-                      <button
-                        key={hub.id}
-                        onClick={() => toggleHub(hub.id)}
-                        className="px-3 py-1.5"
-                        style={{
-                          backgroundColor: selected ? `${C.green}12` : "transparent",
-                          border: `1px solid ${selected ? C.greenDim : C.border}`,
-                          borderRadius: 3,
-                          cursor: "pointer",
-                          transition: "all 0.15s ease",
-                        }}
-                      >
-                        <span
-                          style={{
-                            ...label,
-                            fontSize: "0.65rem",
-                            color: selected ? C.green : C.textDim,
-                          }}
-                        >
-                          {hub.label}
-                        </span>
-                      </button>
-                    );
-                  })}
+                <div className="flex flex-col gap-2">
+                  {([
+                    { id: "jour" as const, label: "JOUR", sub: "06h -- 18h", desc: "Affaires, aeroports, gares" },
+                    { id: "nuit" as const, label: "NUIT", sub: "18h -- 02h", desc: "Restaurants, concerts, soirees" },
+                    { id: "nuit_profonde" as const, label: "NUIT PROFONDE", sub: "22h -- 06h", desc: "Clubs, derniers metros, urgences" },
+                  ] as const).map((opt) => (
+                    <OptionButton
+                      key={opt.id}
+                      selected={state.shiftType === opt.id}
+                      onClick={() => setState((prev) => ({ ...prev, shiftType: opt.id }))}
+                      label={opt.label}
+                      desc={opt.desc}
+                      meta={opt.sub}
+                    />
+                  ))}
                 </div>
-              </div>
-            </motion.div>
-          )}
+              </motion.div>
+            )}
 
-          {/* ── Q2: Quand conduis-tu ? ── */}
-          {state.step === 2 && (
-            <motion.div
-              key="q2"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.2 }}
-              className="flex flex-col gap-5"
-            >
-              <div className="flex flex-col gap-1 text-center">
-                <h1
-                  style={{
-                    fontFamily: "'Cormorant Garamond', serif",
-                    fontSize: "1.6rem",
-                    fontWeight: 300,
-                    color: C.text,
-                    margin: 0,
-                  }}
-                >
-                  Quand conduis-tu le plus ?
-                </h1>
-              </div>
+            {/* -- Step 1: Anchor selection -- */}
+            {state.step === 1 && (
+              <motion.div
+                key="step1"
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 12 }}
+                transition={{ duration: 0.25 }}
+                className="flex flex-col gap-5 flex-1"
+              >
+                <StepHeader title={STEP_TITLES[1]} sub={STEP_SUBS[1]} />
 
-              <div className="flex flex-col gap-2">
-                {TIME_OPTIONS.map((opt) => {
-                  const selected = state.timePreference === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      onClick={() => setState((prev) => ({ ...prev, timePreference: opt.id }))}
-                      className="w-full text-left px-4 py-3 flex items-center justify-between"
+                <div className="grid grid-cols-2 gap-2">
+                  {ANCHOR_OPTIONS.map((anchor) => (
+                    <motion.button
+                      key={anchor.id}
+                      onClick={() => setState((prev) => ({ ...prev, anchor }))}
+                      className="text-left px-3 py-2.5 flex flex-col gap-0.5"
                       style={{
-                        backgroundColor: selected ? `${C.green}12` : C.surface,
-                        border: `1px solid ${selected ? C.green : C.border}`,
-                        borderRadius: 4,
+                        backgroundColor: state.anchor?.id === anchor.id ? `${C.green}10` : C.surface,
+                        border: `1px solid ${state.anchor?.id === anchor.id ? C.greenDim : C.border}`,
+                        borderRadius: 3,
                         cursor: "pointer",
-                        transition: "all 0.15s ease",
+                        transition: "all 0.25s ease",
                       }}
+                      whileTap={{ scale: 0.97 }}
                     >
-                      <div className="flex flex-col gap-0.5">
-                        <span
-                          className="uppercase tracking-[0.15em]"
-                          style={{
-                            ...label,
-                            fontSize: "0.75rem",
-                            fontWeight: 500,
-                            color: selected ? C.green : C.text,
-                          }}
-                        >
-                          {opt.label}
-                        </span>
-                        <span style={{ ...label, fontSize: "0.65rem", color: C.textDim }}>
-                          {opt.desc}
-                        </span>
-                      </div>
-                      <span style={{ ...mono, fontSize: "0.6rem", color: C.textDim }}>
-                        {opt.sub}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </motion.div>
-          )}
-
-          {/* ── Q3: Comment travailles-tu ? ── */}
-          {state.step === 3 && (
-            <motion.div
-              key="q3"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.2 }}
-              className="flex flex-col gap-5"
-            >
-              <div className="flex flex-col gap-1 text-center">
-                <h1
-                  style={{
-                    fontFamily: "'Cormorant Garamond', serif",
-                    fontSize: "1.6rem",
-                    fontWeight: 300,
-                    color: C.text,
-                    margin: 0,
-                  }}
-                >
-                  Comment travailles-tu ?
-                </h1>
-                <p style={{ ...label, fontSize: "0.7rem", color: C.textDim }}>
-                  Ton style aide Flow a proposer les bons signaux.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                {STYLE_OPTIONS.map((opt) => {
-                  const selected = state.style === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      onClick={() => setState((prev) => ({ ...prev, style: opt.id }))}
-                      className="w-full text-left px-4 py-3"
-                      style={{
-                        backgroundColor: selected ? `${C.green}12` : C.surface,
-                        border: `1px solid ${selected ? C.green : C.border}`,
-                        borderRadius: 4,
-                        cursor: "pointer",
-                        transition: "all 0.15s ease",
-                      }}
-                    >
-                      <span
-                        className="uppercase tracking-[0.15em]"
-                        style={{
-                          ...label,
-                          fontSize: "0.75rem",
-                          fontWeight: 500,
-                          color: selected ? C.green : C.text,
-                        }}
-                      >
-                        {opt.label}
-                      </span>
                       <span
                         style={{
                           ...label,
                           fontSize: "0.7rem",
-                          color: C.textDim,
-                          marginLeft: 8,
+                          fontWeight: 500,
+                          color: state.anchor?.id === anchor.id ? C.green : C.text,
+                          transition: "color 0.25s ease",
                         }}
                       >
-                        {opt.desc}
+                        {anchor.label}
                       </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </motion.div>
-          )}
-
-          {/* ── Q4: Objectif de session ? ── */}
-          {state.step === 4 && (
-            <motion.div
-              key="q4"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.2 }}
-              className="flex flex-col gap-5"
-            >
-              <div className="flex flex-col gap-1 text-center">
-                <h1
-                  style={{
-                    fontFamily: "'Cormorant Garamond', serif",
-                    fontSize: "1.6rem",
-                    fontWeight: 300,
-                    color: C.text,
-                    margin: 0,
-                  }}
-                >
-                  Objectif de la session ?
-                </h1>
-              </div>
-
-              <div className="flex flex-wrap gap-2 justify-center">
-                {GOAL_OPTIONS.map((opt) => {
-                  const selected = state.goal === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      onClick={() => setState((prev) => ({ ...prev, goal: opt.id }))}
-                      className="px-5 py-3"
-                      style={{
-                        backgroundColor: selected ? `${C.green}15` : C.surface,
-                        border: `1px solid ${selected ? C.green : C.border}`,
-                        borderRadius: 4,
-                        cursor: "pointer",
-                        transition: "all 0.15s ease",
-                        minWidth: opt.id === "max" ? "100%" : "auto",
-                      }}
-                    >
                       <span
+                        className="uppercase tracking-[0.1em]"
                         style={{
                           ...mono,
-                          fontSize: opt.id === "max" ? "0.8rem" : "1rem",
-                          fontWeight: selected ? 600 : 400,
-                          color: selected ? C.green : C.text,
+                          fontSize: "0.45rem",
+                          color: state.anchor?.id === anchor.id ? C.greenDim : C.textGhost,
                         }}
                       >
-                        {opt.label}
+                        {anchor.corridor}
                       </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                    </motion.button>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-        {/* Continue button */}
-        <button
-          onClick={advance}
-          disabled={!canAdvance}
-          className="w-full py-3.5 uppercase tracking-[0.2em] mt-2"
-          style={{
-            ...label,
-            fontSize: "0.75rem",
-            fontWeight: 500,
-            color: canAdvance ? C.bg : C.textGhost,
-            backgroundColor: canAdvance ? C.green : C.surface,
-            border: `1px solid ${canAdvance ? C.green : C.border}`,
-            borderRadius: 4,
-            cursor: canAdvance ? "pointer" : "default",
-            opacity: canAdvance ? 1 : 0.5,
-            transition: "all 0.2s ease",
-          }}
-        >
-          CONTINUER
-        </button>
+          {/* Spacer */}
+          <div className="flex-1 min-h-4" />
+
+          {/* Navigation */}
+          <div className="flex items-center gap-3 pt-4">
+            {state.step > 0 && (
+              <button
+                onClick={goBack}
+                className="px-4 py-3 uppercase tracking-[0.15em]"
+                style={{
+                  ...label,
+                  fontSize: "0.65rem",
+                  fontWeight: 400,
+                  color: C.textDim,
+                  backgroundColor: "transparent",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 3,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                RETOUR
+              </button>
+            )}
+            <button
+              onClick={advance}
+              disabled={!canAdvance}
+              className="flex-1 py-3.5 uppercase tracking-[0.2em] text-center"
+              style={{
+                ...label,
+                fontSize: "0.7rem",
+                fontWeight: 500,
+                color: canAdvance ? C.bg : C.textGhost,
+                backgroundColor: canAdvance ? C.green : C.surface,
+                border: `1px solid ${canAdvance ? C.green : C.border}`,
+                borderRadius: 3,
+                cursor: canAdvance ? "pointer" : "default",
+                opacity: canAdvance ? 1 : 0.4,
+                transition: "all 0.35s ease",
+              }}
+            >
+              {state.step === 1 ? "COMMENCER" : "CONTINUER"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+// -- Sub-components --
+
+function StepHeader({ title, sub }: { title: string; sub: string }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <h1
+        style={{
+          ...heading,
+          fontSize: "clamp(2.2rem, 7vw, 3.5rem)",
+          color: C.text,
+          margin: 0,
+          letterSpacing: "-0.02em",
+        }}
+      >
+        {title}
+      </h1>
+      <p style={{ ...label, color: C.textDim, margin: 0, fontSize: "0.75rem" }}>
+        {sub}
+      </p>
+    </div>
+  );
+}
+
+function OptionButton({
+  selected,
+  onClick,
+  label: optLabel,
+  desc,
+  meta,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  label: string;
+  desc: string;
+  meta: string;
+}) {
+  return (
+    <motion.button
+      onClick={onClick}
+      className="w-full text-left px-4 py-3.5 flex items-center justify-between"
+      style={{
+        backgroundColor: selected ? `${C.green}10` : C.surface,
+        border: `1px solid ${selected ? C.greenDim : C.border}`,
+        borderRadius: 3,
+        cursor: "pointer",
+        transition: "all 0.25s ease",
+      }}
+      whileTap={{ scale: 0.985 }}
+    >
+      <div className="flex flex-col gap-1">
+        <span
+          className="uppercase tracking-[0.2em]"
+          style={{
+            ...label,
+            fontSize: "0.7rem",
+            fontWeight: 500,
+            color: selected ? C.green : C.text,
+            transition: "color 0.25s ease",
+          }}
+        >
+          {optLabel}
+        </span>
+        <span style={{ ...label, fontSize: "0.6rem", color: C.textDim, lineHeight: 1.5 }}>
+          {desc}
+        </span>
+      </div>
+      <span
+        style={{
+          ...mono,
+          fontSize: "0.6rem",
+          color: selected ? C.green : C.textGhost,
+          transition: "color 0.25s ease",
+        }}
+      >
+        {meta}
+      </span>
+    </motion.button>
   );
 }

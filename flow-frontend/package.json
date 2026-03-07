@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite",
-    "generate:city-signals": "npx tsx scripts/generate-city-signals-llm.ts"
+    "dev": "vite"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
