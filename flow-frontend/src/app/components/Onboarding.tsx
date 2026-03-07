@@ -1,11 +1,13 @@
 // FLOW — 15-Second Onboarding
 // 4 questions. Tap tap tap tap. LIVE.
 // Driver feels immediately understood.
+// Map stays visible in background — city reading starts immediately.
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useNavigate } from "react-router";
 import { C, label, mono } from "./theme";
+import { FlowMap } from "./FlowMap";
 
 // ── Types ──
 
@@ -174,19 +176,42 @@ export function Onboarding() {
   // ── Confirmation Screen (Step 5) ──
   if (state.step === 5) {
     return (
-      <motion.div
-        className="h-screen w-screen flex flex-col items-center justify-center px-6"
+      <div
+        className="h-screen w-screen relative overflow-hidden"
         style={{ backgroundColor: C.bg }}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.3 }}
       >
+        {/* Background Map — more visible on confirmation */}
+        <div className="absolute inset-0 opacity-40">
+          <FlowMap
+            zoneHeat={{}}
+            zoneStates={{}}
+            zoneSaturation={{}}
+            favoredZoneIds={state.zones}
+            breathPhase={0}
+            windowState="stable"
+          />
+        </div>
+
+        {/* Gradient overlay */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background: `linear-gradient(to bottom, ${C.bg}dd 0%, ${C.bg}cc 50%, ${C.bg}ee 100%)`,
+          }}
+        />
+
         <motion.div
-          className="flex flex-col items-center gap-6 max-w-sm w-full"
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.4 }}
+          className="relative z-10 h-full flex flex-col items-center justify-center px-6"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3 }}
         >
+          <motion.div
+            className="flex flex-col items-center gap-6 max-w-sm w-full"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1, duration: 0.4 }}
+          >
           <h1
             style={{
               fontFamily: "'Cormorant Garamond', serif",
@@ -263,17 +288,40 @@ export function Onboarding() {
             Lecture du champ en cours...
           </p>
         </motion.div>
-      </motion.div>
+        </motion.div>
+      </div>
     );
   }
 
   // ── Question Screens (Steps 1-4) ──
   return (
     <div
-      className="h-screen w-screen flex flex-col items-center justify-center px-6"
+      className="h-screen w-screen relative overflow-hidden"
       style={{ backgroundColor: C.bg, color: C.text }}
     >
-      <div className="flex flex-col gap-6 max-w-sm w-full">
+      {/* Background Map — city visible while answering */}
+      <div className="absolute inset-0 opacity-30">
+        <FlowMap
+          zoneHeat={{}}
+          zoneStates={{}}
+          zoneSaturation={{}}
+          favoredZoneIds={state.zones}
+          breathPhase={0}
+          windowState="stable"
+        />
+      </div>
+
+      {/* Gradient overlay for readability */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: `linear-gradient(to bottom, ${C.bg}ee 0%, ${C.bg}dd 40%, ${C.bg}cc 100%)`,
+        }}
+      />
+
+      {/* Questions overlay */}
+      <div className="relative z-10 h-full flex flex-col items-center justify-center px-6">
+        <div className="flex flex-col gap-6 max-w-sm w-full">
         {/* Progress indicator */}
         <div className="flex items-center justify-center gap-2">
           <span
@@ -610,6 +658,7 @@ export function Onboarding() {
         >
           CONTINUER
         </button>
+        </div>
       </div>
     </div>
   );

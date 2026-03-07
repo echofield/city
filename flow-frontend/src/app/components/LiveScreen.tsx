@@ -1561,8 +1561,8 @@ function CityBriefing({ signalCount }: { signalCount: number }) {
     };
   }, [signalCount > 0]); // Re-fetch when signals appear/disappear
 
-  // Don't show if no signals
-  if (signalCount === 0) return null;
+  // Don't show if no signals or if API failed
+  if (signalCount === 0 || (error && !briefing)) return null;
 
   return (
     <div
@@ -1616,18 +1616,7 @@ function CityBriefing({ signalCount }: { signalCount: number }) {
         </div>
       )}
 
-      {error && !briefing && (
-        <div
-          className="py-1"
-          style={{
-            ...label,
-            fontSize: "0.7rem",
-            color: C.textDim,
-          }}
-        >
-          Briefing indisponible
-        </div>
-      )}
+      {/* Error state: silently fail - don't show error UI */}
 
       {briefing?.briefing?.lines && (
         <div className="flex flex-col gap-1">
