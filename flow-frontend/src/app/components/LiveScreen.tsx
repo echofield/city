@@ -21,6 +21,128 @@ interface CityBriefingData {
   currentTime: string;
 }
 
+// ── One-Tap Navigation ──
+// Opens Waze by default, falls back to Google Maps
+
+const ZONE_COORDINATES: Record<string, { lat: number; lng: number }> = {
+  // Arrondissements
+  "1": { lat: 48.8603, lng: 2.3472 },
+  "2": { lat: 48.8684, lng: 2.3415 },
+  "3": { lat: 48.8641, lng: 2.3619 },
+  "4": { lat: 48.8546, lng: 2.3577 },
+  "5": { lat: 48.8448, lng: 2.3508 },
+  "6": { lat: 48.8496, lng: 2.3323 },
+  "7": { lat: 48.8566, lng: 2.3150 },
+  "8": { lat: 48.8744, lng: 2.3106 },
+  "9": { lat: 48.8766, lng: 2.3372 },
+  "10": { lat: 48.8760, lng: 2.3597 },
+  "11": { lat: 48.8590, lng: 2.3798 },
+  "12": { lat: 48.8396, lng: 2.3876 },
+  "13": { lat: 48.8322, lng: 2.3561 },
+  "14": { lat: 48.8330, lng: 2.3264 },
+  "15": { lat: 48.8421, lng: 2.2987 },
+  "16": { lat: 48.8637, lng: 2.2769 },
+  "17": { lat: 48.8835, lng: 2.3090 },
+  "18": { lat: 48.8925, lng: 2.3444 },
+  "19": { lat: 48.8817, lng: 2.3822 },
+  "20": { lat: 48.8638, lng: 2.3985 },
+  // Major venues
+  "bercy": { lat: 48.8387, lng: 2.3783 },
+  "accor arena": { lat: 48.8387, lng: 2.3783 },
+  "stade de france": { lat: 48.9244, lng: 2.3601 },
+  "parc des princes": { lat: 48.8414, lng: 2.2530 },
+  "la defense arena": { lat: 48.8958, lng: 2.2297 },
+  "zenith": { lat: 48.8939, lng: 2.3936 },
+  "olympia": { lat: 48.8697, lng: 2.3283 },
+  "philharmonie": { lat: 48.8909, lng: 2.3936 },
+  // Stations
+  "gare du nord": { lat: 48.8809, lng: 2.3553 },
+  "gare de lyon": { lat: 48.8448, lng: 2.3735 },
+  "gare de l'est": { lat: 48.8768, lng: 2.3590 },
+  "gare montparnasse": { lat: 48.8408, lng: 2.3212 },
+  "gare saint-lazare": { lat: 48.8766, lng: 2.3250 },
+  // Airports
+  "cdg": { lat: 49.0097, lng: 2.5479 },
+  "orly": { lat: 48.7262, lng: 2.3652 },
+  // Hubs
+  "la defense": { lat: 48.8918, lng: 2.2362 },
+  "bastille": { lat: 48.8533, lng: 2.3692 },
+  "opera": { lat: 48.8719, lng: 2.3316 },
+  "chatelet": { lat: 48.8584, lng: 2.3475 },
+  "republique": { lat: 48.8675, lng: 2.3636 },
+  "pigalle": { lat: 48.8821, lng: 2.3372 },
+  "montmartre": { lat: 48.8867, lng: 2.3431 },
+  "trocadero": { lat: 48.8617, lng: 2.2875 },
+  "champs-elysees": { lat: 48.8698, lng: 2.3075 },
+};
+
+function getSignalCoordinates(signal: Signal): { lat: number; lng: number } | null {
+  // 1. Direct coordinates on signal
+  if (signal.lat !== undefined && signal.lng !== undefined) {
+    return { lat: signal.lat, lng: signal.lng };
+  }
+
+  // 2. Zone-based lookup
+  const zoneLower = (signal.zone || "").toLowerCase();
+
+  // Try exact match
+  if (ZONE_COORDINATES[zoneLower]) {
+    return ZONE_COORDINATES[zoneLower];
+  }
+
+  // Try partial match for venues
+  for (const [key, coords] of Object.entries(ZONE_COORDINATES)) {
+    if (zoneLower.includes(key) || key.includes(zoneLower)) {
+      return coords;
+    }
+  }
+
+  // 3. Arrondissement fallback
+  if (signal.arrondissement) {
+    const arr = signal.arrondissement.replace(/[^\d]/g, "");
+    if (ZONE_COORDINATES[arr]) {
+      return ZONE_COORDINATES[arr];
+    }
+  }
+
+  // 4. Extract arrondissement from zone string
+  const arrMatch = zoneLower.match(/\b(\d{1,2})(e|ème|er)?\b/i);
+  if (arrMatch && ZONE_COORDINATES[arrMatch[1]]) {
+    return ZONE_COORDINATES[arrMatch[1]];
+  }
+
+  return null;
+}
+
+function openNavigation(signal: Signal): void {
+  const coords = getSignalCoordinates(signal);
+
+  if (!coords) {
+    // No coordinates found - show alert
+    alert(`Coordonnées non disponibles pour ${signal.zone || signal.title}`);
+    return;
+  }
+
+  const { lat, lng } = coords;
+
+  // Build Waze URL
+  const wazeUrl = `https://waze.com/ul?ll=${lat.toFixed(6)},${lng.toFixed(6)}&navigate=yes`;
+
+  // Build Google Maps fallback URL
+  const googleUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat.toFixed(6)},${lng.toFixed(6)}&travelmode=driving`;
+
+  // Try Waze first, then fallback to Google Maps
+  // On mobile, this will open the app if installed
+  const wazeWindow = window.open(wazeUrl, "_blank");
+
+  // If Waze popup was blocked or failed, try Google Maps after a short delay
+  if (!wazeWindow || wazeWindow.closed) {
+    setTimeout(() => {
+      window.open(googleUrl, "_blank");
+    }, 100);
+  }
+}
+
 // ── Signal Categories with Icons ──
 // Fast visual scanning for drivers
 
@@ -679,7 +801,7 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
         </span>
       </div>
 
-      {/* ROW 3: Timing + zone */}
+      {/* ROW 3: Timing + zone + intensity */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span
@@ -718,6 +840,31 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
           ))}
         </div>
       </div>
+
+      {/* ROW 4: NAVIGUER button — one tap to Waze */}
+      {(isStructural || isRare || signal.is_active || countdown.urgency === "imminent") && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            openNavigation(signal);
+          }}
+          className="w-full mt-3 py-2 flex items-center justify-center gap-2 uppercase tracking-[0.15em]"
+          style={{
+            ...label,
+            fontSize: "0.7rem",
+            fontWeight: 500,
+            color: isStructural || isRare ? C.bg : C.text,
+            backgroundColor: isStructural || isRare ? C.green : C.surface,
+            border: `1px solid ${isStructural || isRare ? C.green : C.border}`,
+            borderRadius: 3,
+            cursor: "pointer",
+            transition: "all 0.2s ease",
+          }}
+        >
+          <span style={{ fontSize: "0.9rem" }}>→</span>
+          NAVIGUER
+        </button>
+      )}
     </motion.div>
   );
 }

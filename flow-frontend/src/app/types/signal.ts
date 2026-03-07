@@ -44,6 +44,9 @@ export interface Signal {
   raw_event_id?: string
   display_label?: string
   display_sublabel?: string
+  // Navigation coordinates (optional - falls back to zone lookup)
+  lat?: number
+  lng?: number
 }
 
 export interface SignalFeed {
