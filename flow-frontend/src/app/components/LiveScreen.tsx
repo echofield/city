@@ -76,46 +76,74 @@ const ZONE_COORDINATES: Record<string, { lat: number; lng: number }> = {
   "champs-elysees": { lat: 48.8698, lng: 2.3075 },
 };
 
-function getSignalCoordinates(signal: Signal): { lat: number; lng: number } | null {
-  // 1. Direct coordinates on signal
+type CoordPrecision = "exact" | "venue" | "zone" | "none";
+
+interface CoordResult {
+  coords: { lat: number; lng: number } | null;
+  precision: CoordPrecision;
+  hint: string; // User-facing hint about precision
+}
+
+function getSignalCoordinates(signal: Signal): CoordResult {
+  // 1. Direct coordinates on signal — highest precision
   if (signal.lat !== undefined && signal.lng !== undefined) {
-    return { lat: signal.lat, lng: signal.lng };
+    return {
+      coords: { lat: signal.lat, lng: signal.lng },
+      precision: "exact",
+      hint: "adresse exacte",
+    };
   }
 
-  // 2. Zone-based lookup
+  // 2. Zone-based lookup — venue precision
   const zoneLower = (signal.zone || "").toLowerCase();
 
-  // Try exact match
+  // Try exact match for known venues
   if (ZONE_COORDINATES[zoneLower]) {
-    return ZONE_COORDINATES[zoneLower];
+    return {
+      coords: ZONE_COORDINATES[zoneLower],
+      precision: "venue",
+      hint: "lieu connu",
+    };
   }
 
-  // Try partial match for venues
+  // Try partial match for venues (bercy, gare du nord, etc.)
   for (const [key, coords] of Object.entries(ZONE_COORDINATES)) {
     if (zoneLower.includes(key) || key.includes(zoneLower)) {
-      return coords;
+      return {
+        coords,
+        precision: "venue",
+        hint: "lieu connu",
+      };
     }
   }
 
-  // 3. Arrondissement fallback
+  // 3. Arrondissement fallback — zone center precision
   if (signal.arrondissement) {
     const arr = signal.arrondissement.replace(/[^\d]/g, "");
     if (ZONE_COORDINATES[arr]) {
-      return ZONE_COORDINATES[arr];
+      return {
+        coords: ZONE_COORDINATES[arr],
+        precision: "zone",
+        hint: `centre ${arr}e`,
+      };
     }
   }
 
   // 4. Extract arrondissement from zone string
   const arrMatch = zoneLower.match(/\b(\d{1,2})(e|ème|er)?\b/i);
   if (arrMatch && ZONE_COORDINATES[arrMatch[1]]) {
-    return ZONE_COORDINATES[arrMatch[1]];
+    return {
+      coords: ZONE_COORDINATES[arrMatch[1]],
+      precision: "zone",
+      hint: `centre ${arrMatch[1]}e`,
+    };
   }
 
-  return null;
+  return { coords: null, precision: "none", hint: "position inconnue" };
 }
 
 function openNavigation(signal: Signal): void {
-  const coords = getSignalCoordinates(signal);
+  const { coords, precision, hint } = getSignalCoordinates(signal);
 
   if (!coords) {
     // No coordinates found - show alert
@@ -141,6 +169,12 @@ function openNavigation(signal: Signal): void {
       window.open(googleUrl, "_blank");
     }, 100);
   }
+}
+
+// Get precision info for display in UI
+function getCoordPrecisionInfo(signal: Signal): { precision: CoordPrecision; hint: string } {
+  const result = getSignalCoordinates(signal);
+  return { precision: result.precision, hint: result.hint };
 }
 
 // ── Signal Categories with Icons ──
@@ -702,6 +736,10 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
   // Is this a structural (big) signal?
   const isStructural = isStructuralSignal(signal);
 
+  // Coordinate precision for navigation hint
+  const { precision, hint: precisionHint } = getCoordPrecisionInfo(signal);
+  const showNavButton = (isStructural || isRare || signal.is_active || countdown.urgency === "imminent") && precision !== "none";
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -842,28 +880,46 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
       </div>
 
       {/* ROW 4: NAVIGUER button — one tap to Waze */}
-      {(isStructural || isRare || signal.is_active || countdown.urgency === "imminent") && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            openNavigation(signal);
-          }}
-          className="w-full mt-3 py-2 flex items-center justify-center gap-2 uppercase tracking-[0.15em]"
-          style={{
-            ...label,
-            fontSize: "0.7rem",
-            fontWeight: 500,
-            color: isStructural || isRare ? C.bg : C.text,
-            backgroundColor: isStructural || isRare ? C.green : C.surface,
-            border: `1px solid ${isStructural || isRare ? C.green : C.border}`,
-            borderRadius: 3,
-            cursor: "pointer",
-            transition: "all 0.2s ease",
-          }}
-        >
-          <span style={{ fontSize: "0.9rem" }}>→</span>
-          NAVIGUER
-        </button>
+      {showNavButton && (
+        <div className="mt-3">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              openNavigation(signal);
+            }}
+            className="w-full py-2 flex items-center justify-center gap-2 uppercase tracking-[0.15em]"
+            style={{
+              ...label,
+              fontSize: "0.7rem",
+              fontWeight: 500,
+              color: isStructural || isRare ? C.bg : C.text,
+              backgroundColor: isStructural || isRare ? C.green : C.surface,
+              border: `1px solid ${isStructural || isRare ? C.green : C.border}`,
+              borderRadius: 3,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            <span style={{ fontSize: "0.9rem" }}>→</span>
+            NAVIGUER
+          </button>
+          {/* Precision hint - show when not exact */}
+          {precision !== "exact" && (
+            <div
+              className="flex items-center justify-center gap-1 mt-1"
+              style={{
+                ...mono,
+                fontSize: "0.55rem",
+                color: precision === "venue" ? C.textDim : C.amber,
+              }}
+            >
+              <span style={{ fontSize: "0.5rem" }}>
+                {precision === "venue" ? "◉" : "◎"}
+              </span>
+              <span>{precisionHint}</span>
+            </div>
+          )}
+        </div>
       )}
     </motion.div>
   );

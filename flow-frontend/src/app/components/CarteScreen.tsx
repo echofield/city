@@ -31,6 +31,123 @@ function abbreviateZone(zone: string, maxLen: number = 12): string {
   return zone.length > maxLen ? zone.slice(0, maxLen - 1) + "." : zone;
 }
 
+// ── Ride Type Classification ──
+// Helps driver anticipate client profile and ride nature
+
+type RideType = "AERO" | "GARE" | "EVENT" | "NUIT" | "RESTO" | "PRO" | "SPOT";
+
+const RIDE_TYPE_COLORS: Record<RideType, string> = {
+  AERO: "#4ECCA3",   // Teal - airport runs
+  GARE: "#5B8DEE",   // Blue - station pickups
+  EVENT: "#E8B84A",  // Gold - concert/event
+  NUIT: "#9B7BD4",   // Purple - nightlife
+  RESTO: "#E88E5A",  // Orange - restaurant
+  PRO: "#7B8FA1",    // Gray - business
+  SPOT: "#6B7B8C",   // Default
+};
+
+function getRideType(signal: Signal): RideType {
+  const type = signal.type || "";
+  const reason = (signal.reason || "").toLowerCase();
+  const zone = (signal.zone || "").toLowerCase();
+
+  // Airport
+  if (zone.includes("cdg") || zone.includes("orly") ||
+      reason.includes("aeroport") || reason.includes("vols") || reason.includes("departs")) {
+    return "AERO";
+  }
+
+  // Train station
+  if (zone.includes("gare") || reason.includes("train") || reason.includes("arrivees")) {
+    return "GARE";
+  }
+
+  // Concert / Event
+  if (type === "event_exit" || type === "banlieue_pressure" ||
+      reason.includes("concert") || reason.includes("spectateurs") ||
+      reason.includes("festival") || reason.includes("expo") || reason.includes("salon")) {
+    return "EVENT";
+  }
+
+  // Nightlife
+  if (type === "nightlife" || reason.includes("club") || reason.includes("techno") ||
+      reason.includes("nightlife") || zone.includes("pigalle") || reason.includes("bars")) {
+    return "NUIT";
+  }
+
+  // Restaurant
+  if (type === "restaurant" || reason.includes("restaurant") ||
+      reason.includes("palace") || reason.includes("festive")) {
+    return "RESTO";
+  }
+
+  // Business / Professional
+  if (zone.includes("defense") || reason.includes("affaires") ||
+      reason.includes("business") || reason.includes("bureau")) {
+    return "PRO";
+  }
+
+  return "SPOT";
+}
+
+// ── Generate concrete cause line for CARTE ──
+// More specific than generic "event" labels
+
+function generateCarteCause(signal: Signal): string {
+  const rideType = getRideType(signal);
+  const reason = signal.reason || "";
+  const zone = signal.zone || "";
+
+  switch (rideType) {
+    case "AERO":
+      if (reason.includes("departs") || reason.includes("matinaux")) {
+        return "Vague départs matinaux";
+      }
+      if (zone.includes("cdg")) return "Flux passagers CDG";
+      if (zone.includes("orly")) return "Flux passagers Orly";
+      return "Flux aéroport";
+
+    case "GARE":
+      if (reason.includes("train")) return "Arrivées trains";
+      if (zone.includes("nord")) return "Gare du Nord - arrivées";
+      if (zone.includes("lyon")) return "Gare de Lyon - arrivées";
+      if (zone.includes("montparnasse")) return "Montparnasse - arrivées";
+      return "Flux gare";
+
+    case "EVENT":
+      // Extract spectator count if present
+      const spectMatch = reason.match(/(\d+)\s*spectateurs/);
+      if (spectMatch) {
+        return `Sortie event · ${spectMatch[1]} pers`;
+      }
+      if (reason.includes("concert")) return "Sortie concert";
+      if (reason.includes("expo") || reason.includes("salon")) return "Fermeture expo";
+      if (reason.includes("festival")) return "Fin festival";
+      return "Sortie événement";
+
+    case "NUIT":
+      if (reason.includes("techno")) return "Fermeture club techno";
+      if (zone.includes("pigalle")) return "Pigalle - clubs";
+      if (zone.includes("oberkampf")) return "Oberkampf - bars";
+      return "Sorties nuit";
+
+    case "RESTO":
+      if (reason.includes("premium") || reason.includes("palace")) {
+        return "Sorties palace";
+      }
+      if (reason.includes("festive")) return "Vague festive";
+      return "Sorties restaurants";
+
+    case "PRO":
+      return "Flux bureaux";
+
+    default:
+      // Extract key phrase from reason
+      const shortReason = reason.split(" - ")[0];
+      return shortReason.length > 20 ? shortReason.slice(0, 18) + "..." : shortReason || "Signal";
+  }
+}
+
 // ── Helpers ──
 
 function getTopSignals(signals: Signal[], limit: number = 5): Signal[] {
@@ -152,75 +269,107 @@ function DirectionalHint({ signal }: { signal: Signal | null }) {
   const proximity = getCarteProximity(signal);
   const zoneDisplay = abbreviateZone(signal.zone || signal.title);
 
+  // Ride type and cause
+  const rideType = getRideType(signal);
+  const cause = generateCarteCause(signal);
+
   return (
     <div
-      className="flex items-center justify-between px-4 py-3"
+      className="px-4 py-3"
       style={{
         backgroundColor: C.surface,
         borderBottom: `1px solid ${C.border}`,
       }}
     >
-      {/* Direction arrow + label */}
-      <div className="flex items-center gap-3">
-        <span
-          style={{
-            fontSize: "1.5rem",
-            color: C.green,
-            fontWeight: 300,
-          }}
-        >
-          {arrow}
-        </span>
-        <div className="flex flex-col">
+      {/* Row 1: Direction arrow + zone + proximity */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3">
           <span
-            className="uppercase tracking-[0.1em]"
             style={{
-              ...label,
-              fontSize: "0.7rem",
+              fontSize: "1.5rem",
+              color: C.green,
+              fontWeight: 300,
+            }}
+          >
+            {arrow}
+          </span>
+          <div className="flex flex-col">
+            <span
+              className="uppercase tracking-[0.1em]"
+              style={{
+                ...label,
+                fontSize: "0.7rem",
+                fontWeight: 500,
+                color: C.text,
+              }}
+            >
+              {dirLabel}
+            </span>
+            <span
+              className="truncate"
+              style={{
+                ...label,
+                fontSize: "0.65rem",
+                color: C.textDim,
+                maxWidth: 140,
+              }}
+            >
+              {zoneDisplay}
+            </span>
+          </div>
+        </div>
+
+        {/* Travel time / status */}
+        <div className="flex flex-col items-end">
+          <span
+            style={{
+              ...mono,
+              fontSize: "0.9rem",
               fontWeight: 500,
-              color: C.text,
+              color: proximity.color,
             }}
           >
-            {dirLabel}
+            {proximity.value}
           </span>
-          <span
-            className="truncate"
-            style={{
-              ...label,
-              fontSize: "0.65rem",
-              color: C.textDim,
-              maxWidth: 140,
-            }}
-          >
-            {zoneDisplay}
-          </span>
+          {proximity.sublabel && (
+            <span
+              className="uppercase tracking-[0.05em]"
+              style={{
+                ...label,
+                fontSize: "0.5rem",
+                color: C.textGhost,
+              }}
+            >
+              {proximity.sublabel}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Travel time / status */}
-      <div className="flex flex-col items-end">
+      {/* Row 2: Cause + ride type badge */}
+      <div className="flex items-center justify-between">
         <span
           style={{
-            ...mono,
-            fontSize: "0.9rem",
-            fontWeight: 500,
-            color: proximity.color,
+            ...label,
+            fontSize: "0.75rem",
+            color: C.textMid,
           }}
         >
-          {proximity.value}
+          {cause}
         </span>
-        {proximity.sublabel && (
-          <span
-            className="uppercase tracking-[0.05em]"
-            style={{
-              ...label,
-              fontSize: "0.5rem",
-              color: C.textGhost,
-            }}
-          >
-            {proximity.sublabel}
-          </span>
-        )}
+        <span
+          className="px-1.5 py-0.5 uppercase tracking-[0.08em]"
+          style={{
+            ...mono,
+            fontSize: "0.5rem",
+            fontWeight: 600,
+            color: RIDE_TYPE_COLORS[rideType],
+            backgroundColor: `${RIDE_TYPE_COLORS[rideType]}15`,
+            borderRadius: 2,
+          }}
+        >
+          {rideType}
+        </span>
       </div>
     </div>
   );
@@ -236,60 +385,51 @@ function SignalPinList({ signals }: { signals: Signal[] }) {
       {signals.map((signal) => {
         const proximity = getCarteProximity(signal);
         const zoneDisplay = abbreviateZone(signal.zone || "");
+        const rideType = getRideType(signal);
+        const cause = generateCarteCause(signal);
 
         return (
           <div
             key={signal.id}
-            className="flex items-center gap-3 px-3 py-2"
+            className="px-3 py-2.5"
             style={{
               backgroundColor: C.surface,
               border: `1px solid ${C.border}`,
+              borderLeft: `3px solid ${RIDE_TYPE_COLORS[rideType]}`,
               borderRadius: 3,
             }}
           >
-            {/* Intensity indicator */}
-            <div
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                backgroundColor:
-                  signal.intensity >= 3
-                    ? C.green
-                    : signal.intensity >= 2
-                      ? C.amber
-                      : C.textDim,
-                boxShadow:
-                  signal.intensity >= 3 ? `0 0 6px ${C.green}50` : "none",
-              }}
-            />
-
-            {/* Zone + title */}
-            <div className="flex-1 min-w-0">
-              <span
-                className="block truncate"
-                style={{
-                  ...label,
-                  fontSize: "0.8rem",
-                  color: C.text,
-                }}
-              >
-                {zoneDisplay}
-              </span>
-              <span
-                className="block truncate"
-                style={{
-                  ...label,
-                  fontSize: "0.65rem",
-                  color: C.textDim,
-                }}
-              >
-                {signal.title !== signal.zone ? abbreviateZone(signal.title, 20) : truncateReason(signal.reason, 25)}
-              </span>
-            </div>
-
-            {/* Time / proximity - always shows something */}
-            <div className="flex flex-col items-end gap-0.5">
+            {/* Row 1: Zone + proximity */}
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                {/* Intensity indicator */}
+                <div
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    backgroundColor:
+                      signal.intensity >= 3
+                        ? C.green
+                        : signal.intensity >= 2
+                          ? C.amber
+                          : C.textDim,
+                    boxShadow:
+                      signal.intensity >= 3 ? `0 0 4px ${C.green}50` : "none",
+                  }}
+                />
+                <span
+                  className="truncate"
+                  style={{
+                    ...label,
+                    fontSize: "0.85rem",
+                    fontWeight: 500,
+                    color: C.text,
+                  }}
+                >
+                  {zoneDisplay}
+                </span>
+              </div>
               <span
                 style={{
                   ...mono,
@@ -299,18 +439,34 @@ function SignalPinList({ signals }: { signals: Signal[] }) {
               >
                 {proximity.value}
               </span>
-              {proximity.sublabel && (
-                <span
-                  className="uppercase"
-                  style={{
-                    ...label,
-                    fontSize: "0.5rem",
-                    color: C.textGhost,
-                  }}
-                >
-                  {proximity.sublabel}
-                </span>
-              )}
+            </div>
+
+            {/* Row 2: Cause + ride type badge */}
+            <div className="flex items-center justify-between">
+              <span
+                className="truncate"
+                style={{
+                  ...label,
+                  fontSize: "0.7rem",
+                  color: C.textDim,
+                  maxWidth: 160,
+                }}
+              >
+                {cause}
+              </span>
+              <span
+                className="px-1 py-0.5 uppercase tracking-[0.05em]"
+                style={{
+                  ...mono,
+                  fontSize: "0.45rem",
+                  fontWeight: 600,
+                  color: RIDE_TYPE_COLORS[rideType],
+                  backgroundColor: `${RIDE_TYPE_COLORS[rideType]}12`,
+                  borderRadius: 2,
+                }}
+              >
+                {rideType}
+              </span>
             </div>
           </div>
         );

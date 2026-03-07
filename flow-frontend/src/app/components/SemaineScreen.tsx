@@ -1,17 +1,28 @@
 // FLOW — SEMAINE Screen
-// Money calendar: plan your week by earning potential
-// Each window is expandable with zones, strategy, amplifiers
+// Weekly strategic briefing, not an event calendar
+// Macro field intelligence → Zone rhythms → Event distortions → Money windows
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import type { WeekCalendar, WeekSignal } from "../types/signal";
 import { C, mono, label } from "./theme";
 
+// ── Types for macro analysis ──
+
+interface WeekMacroAnalysis {
+  overallTone: "calme" | "soutenu" | "intense" | "exceptionnel";
+  strongZones: string[];
+  weakZones: string[];
+  bestCorridor: "nord" | "est" | "sud" | "ouest" | "centre";
+  bestTimeSlot: "jour" | "soir" | "nuit";
+  eventImpact: "faible" | "modere" | "fort" | "tres_fort";
+  keyEvents: string[];
+  strategicAdvice: string;
+}
+
 // ── Helpers ──
 
-function getDemandColor(
-  demand: "low" | "medium" | "high" | "very_high"
-): string {
+function getDemandColor(demand: "low" | "medium" | "high" | "very_high"): string {
   switch (demand) {
     case "very_high": return C.green;
     case "high": return C.greenBright;
@@ -20,9 +31,7 @@ function getDemandColor(
   }
 }
 
-function getDemandLabel(
-  demand: "low" | "medium" | "high" | "very_high"
-): string {
+function getDemandLabel(demand: "low" | "medium" | "high" | "very_high"): string {
   switch (demand) {
     case "very_high": return "TRES FORTE";
     case "high": return "FORTE";
@@ -31,173 +40,302 @@ function getDemandLabel(
   }
 }
 
-function getConfidenceLabel(confidence: string): string {
-  switch (confidence) {
-    case "high": return "HAUTE";
-    case "medium": return "MOYENNE";
-    case "low": return "FAIBLE";
-    default: return confidence.toUpperCase();
+// ── Analyze week macro patterns ──
+
+function analyzeWeekMacro(calendar: WeekCalendar): WeekMacroAnalysis {
+  const allSignals = calendar.days.flatMap(d => d.signals);
+  const premiumNights = calendar.days.filter(d => d.is_premium).length;
+
+  // Overall tone
+  let overallTone: WeekMacroAnalysis["overallTone"] = "calme";
+  if (premiumNights >= 4) overallTone = "exceptionnel";
+  else if (premiumNights >= 2) overallTone = "intense";
+  else if (premiumNights >= 1 || allSignals.length >= 8) overallTone = "soutenu";
+
+  // Zone strength analysis
+  const zoneStrength: Record<string, number> = {};
+  for (const signal of allSignals) {
+    const zone = signal.zone || "centre";
+    zoneStrength[zone] = (zoneStrength[zone] || 0) + signal.intensity;
   }
+  const sortedZones = Object.entries(zoneStrength).sort((a, b) => b[1] - a[1]);
+  const strongZones = sortedZones.slice(0, 3).map(([z]) => z);
+  const weakZones = sortedZones.length > 3 ? sortedZones.slice(-2).map(([z]) => z) : [];
+
+  // Best corridor from zone distribution
+  const corridorMap: Record<string, string[]> = {
+    nord: ["17", "18", "19", "9", "10", "montmartre", "pigalle"],
+    est: ["11", "12", "20", "3", "4", "bastille", "nation", "bercy"],
+    sud: ["13", "14", "5", "6", "montparnasse", "italie"],
+    ouest: ["16", "15", "7", "8", "defense", "champs", "etoile"],
+    centre: ["1", "2", "opera", "chatelet", "marais"],
+  };
+  const corridorScores: Record<string, number> = { nord: 0, est: 0, sud: 0, ouest: 0, centre: 0 };
+  for (const signal of allSignals) {
+    const zoneLower = (signal.zone || "").toLowerCase();
+    for (const [corr, zones] of Object.entries(corridorMap)) {
+      if (zones.some(z => zoneLower.includes(z))) {
+        corridorScores[corr] += signal.intensity;
+        break;
+      }
+    }
+  }
+  const bestCorridor = (Object.entries(corridorScores).sort((a, b) => b[1] - a[1])[0]?.[0] || "centre") as WeekMacroAnalysis["bestCorridor"];
+
+  // Best time slot
+  const timeScores = { jour: 0, soir: 0, nuit: 0 };
+  for (const signal of allSignals) {
+    const start = signal.time_window.start || "";
+    const hour = parseInt(start.split(":")[0] || "0", 10);
+    if (hour >= 6 && hour < 18) timeScores.jour += signal.intensity;
+    else if (hour >= 18 && hour < 24) timeScores.soir += signal.intensity;
+    else timeScores.nuit += signal.intensity;
+  }
+  const bestTimeSlot = (Object.entries(timeScores).sort((a, b) => b[1] - a[1])[0]?.[0] || "soir") as WeekMacroAnalysis["bestTimeSlot"];
+
+  // Event impact analysis
+  const eventSignals = allSignals.filter(s =>
+    s.type === "event_exit" ||
+    s.reason?.toLowerCase().includes("concert") ||
+    s.reason?.toLowerCase().includes("match") ||
+    s.reason?.toLowerCase().includes("spectacle")
+  );
+  let eventImpact: WeekMacroAnalysis["eventImpact"] = "faible";
+  if (eventSignals.length >= 8) eventImpact = "tres_fort";
+  else if (eventSignals.length >= 5) eventImpact = "fort";
+  else if (eventSignals.length >= 2) eventImpact = "modere";
+
+  // Key events (unique venues)
+  const keyEvents = [...new Set(eventSignals.map(s => {
+    const venue = s.title || s.zone || "";
+    // Extract venue name, not generic
+    if (venue.toLowerCase().includes("stade")) return "Stade de France";
+    if (venue.toLowerCase().includes("bercy") || venue.toLowerCase().includes("accor")) return "Accor Arena";
+    if (venue.toLowerCase().includes("zenith")) return "Zenith";
+    if (venue.toLowerCase().includes("olympia")) return "Olympia";
+    if (venue.toLowerCase().includes("defense arena")) return "La Defense Arena";
+    return venue;
+  }))].slice(0, 4);
+
+  // Strategic advice
+  let strategicAdvice = "";
+  if (overallTone === "exceptionnel") {
+    strategicAdvice = `Semaine exceptionnelle. Priorite corridor ${bestCorridor.toUpperCase()} le ${bestTimeSlot}. Plusieurs events majeurs amplifient la demande.`;
+  } else if (overallTone === "intense") {
+    strategicAdvice = `Bonne semaine. ${bestTimeSlot === "soir" ? "Soirees" : bestTimeSlot === "nuit" ? "Nuits" : "Journees"} chargees vers ${bestCorridor.toUpperCase()}.`;
+  } else if (overallTone === "soutenu") {
+    strategicAdvice = `Semaine reguliere. Opportunites concentrees ${bestTimeSlot === "soir" ? "en soiree" : bestTimeSlot === "nuit" ? "la nuit" : "la journee"}.`;
+  } else {
+    strategicAdvice = "Semaine calme. Surveiller les fenetres ponctuelles.";
+  }
+
+  return {
+    overallTone,
+    strongZones,
+    weakZones,
+    bestCorridor,
+    bestTimeSlot,
+    eventImpact,
+    keyEvents,
+    strategicAdvice,
+  };
 }
 
-// ── Generate default strategy if missing ──
+// ── Week Briefing Header ──
 
-function getStrategy(signal: WeekSignal): string {
-  // Use provided strategy if available
-  if (signal.strategy && signal.strategy.trim().length > 0) {
-    return signal.strategy;
-  }
+function WeekBriefing({ calendar }: { calendar: WeekCalendar }) {
+  const analysis = analyzeWeekMacro(calendar);
 
-  // Generate default based on signal data
-  const zone = signal.zone || "centre";
-  const timeStart = signal.time_window.start || signal.time_window.label || "debut fenetre";
+  const toneLabels = {
+    calme: "CALME",
+    soutenu: "SOUTENUE",
+    intense: "INTENSE",
+    exceptionnel: "EXCEPTIONNELLE",
+  };
+  const toneColors = {
+    calme: C.textDim,
+    soutenu: C.amber,
+    intense: C.green,
+    exceptionnel: C.greenBright,
+  };
 
-  // Commitment hint based on earning potential
-  const commitment =
-    signal.earning_potential === "very_high" ? "Prioritaire" :
-    signal.earning_potential === "high" ? "Recommande" : "";
+  const timeLabels = {
+    jour: "JOURNEES",
+    soir: "SOIREES",
+    nuit: "NUITS",
+  };
 
-  // Duration hint if available
-  const durationHint =
-    signal.time_window.duration_minutes && signal.time_window.duration_minutes >= 90
-      ? ` (${Math.round(signal.time_window.duration_minutes / 60)}h fenetre)`
-      : "";
-
-  const prefix = commitment ? `${commitment}. ` : "";
-  return `${prefix}Position ${zone} avant ${timeStart}${durationHint}`;
-}
-
-// ── Best Night Card ──
-
-function BestNightCard({
-  bestNight,
-  topSignal,
-}: {
-  bestNight: WeekCalendar["best_night"];
-  topSignal?: WeekSignal;
-}) {
-  if (!bestNight) return null;
-
-  const demandColor = getDemandColor(bestNight.expected_demand);
+  const eventLabels = {
+    faible: "Peu d'events",
+    modere: "Events ponctuels",
+    fort: "Plusieurs events majeurs",
+    tres_fort: "Semaine evenementielle",
+  };
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="px-5 py-5"
+      className="px-4 py-4"
       style={{
-        backgroundColor: C.surface,
-        border: `1px solid ${C.greenDim}`,
-        borderRadius: 4,
+        backgroundColor: `${toneColors[analysis.overallTone]}08`,
+        borderBottom: `1px solid ${C.border}`,
       }}
     >
-      {/* Label */}
-      <span
-        className="block uppercase tracking-[0.15em] mb-2"
-        style={{
-          ...label,
-          fontSize: "0.55rem",
-          fontWeight: 500,
-          color: C.green,
-        }}
-      >
-        BEST NIGHT THIS WEEK
-      </span>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <span
+          className="uppercase tracking-[0.12em]"
+          style={{
+            ...label,
+            fontSize: "0.5rem",
+            color: C.textGhost,
+          }}
+        >
+          BRIEFING SEMAINE
+        </span>
+        <span
+          className="uppercase tracking-[0.1em] px-2 py-0.5"
+          style={{
+            ...label,
+            fontSize: "0.55rem",
+            fontWeight: 600,
+            color: toneColors[analysis.overallTone],
+            backgroundColor: `${toneColors[analysis.overallTone]}15`,
+            borderRadius: 2,
+          }}
+        >
+          {toneLabels[analysis.overallTone]}
+        </span>
+      </div>
 
-      {/* Day */}
-      <h2
-        style={{
-          fontFamily: "'Cormorant Garamond', serif",
-          fontSize: "2.2rem",
-          fontWeight: 400,
-          color: C.text,
-          margin: 0,
-          lineHeight: 1.1,
-        }}
-      >
-        {bestNight.day}
-      </h2>
-
-      {/* Reason */}
+      {/* Strategic advice */}
       <p
-        className="mt-2"
         style={{
           ...label,
-          fontSize: "0.85rem",
-          color: C.textDim,
+          fontSize: "0.9rem",
+          color: C.text,
+          lineHeight: 1.4,
+          marginBottom: 12,
         }}
       >
-        {bestNight.reason}
+        {analysis.strategicAdvice}
       </p>
 
-      {/* Amplifiers */}
-      {topSignal?.overlapping_factors && topSignal.overlapping_factors.length > 0 && (
-        <div className="flex items-center gap-2 mt-3 flex-wrap">
-          {topSignal.overlapping_factors.slice(0, 3).map((factor, i) => (
+      {/* Macro indicators */}
+      <div className="flex flex-wrap gap-3 mb-3">
+        {/* Best corridor */}
+        <div className="flex items-center gap-1.5">
+          <span style={{ fontSize: "0.85rem" }}>
+            {analysis.bestCorridor === "nord" ? "↑" :
+             analysis.bestCorridor === "sud" ? "↓" :
+             analysis.bestCorridor === "est" ? "→" :
+             analysis.bestCorridor === "ouest" ? "←" : "◎"}
+          </span>
+          <span style={{ ...label, fontSize: "0.7rem", color: C.textMid }}>
+            {analysis.bestCorridor.toUpperCase()}
+          </span>
+        </div>
+
+        {/* Best time */}
+        <div className="flex items-center gap-1.5">
+          <span style={{ fontSize: "0.75rem" }}>⏰</span>
+          <span style={{ ...label, fontSize: "0.7rem", color: C.textMid }}>
+            {timeLabels[analysis.bestTimeSlot]}
+          </span>
+        </div>
+
+        {/* Event impact */}
+        <div className="flex items-center gap-1.5">
+          <span style={{ fontSize: "0.75rem" }}>
+            {analysis.eventImpact === "tres_fort" ? "🔥" :
+             analysis.eventImpact === "fort" ? "🎭" : "📍"}
+          </span>
+          <span style={{ ...label, fontSize: "0.7rem", color: C.textMid }}>
+            {eventLabels[analysis.eventImpact]}
+          </span>
+        </div>
+      </div>
+
+      {/* Strong zones */}
+      {analysis.strongZones.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span
+            className="uppercase tracking-[0.08em]"
+            style={{ ...label, fontSize: "0.5rem", color: C.textGhost }}
+          >
+            ZONES FORTES:
+          </span>
+          {analysis.strongZones.map((zone, i) => (
             <span
               key={i}
-              className="px-2 py-1 uppercase tracking-[0.08em]"
+              className="px-1.5 py-0.5"
               style={{
                 ...label,
-                fontSize: "0.5rem",
-                color: C.amber,
-                backgroundColor: `${C.amber}10`,
-                border: `1px solid ${C.amberDim}`,
+                fontSize: "0.6rem",
+                color: C.green,
+                backgroundColor: `${C.green}10`,
                 borderRadius: 2,
               }}
             >
-              {factor}
+              {zone}
             </span>
           ))}
         </div>
       )}
 
-      {/* Time window + demand */}
-      {topSignal && (
-        <div className="flex items-center justify-between mt-4 pt-3" style={{ borderTop: `1px solid ${C.border}` }}>
+      {/* Key events */}
+      {analysis.keyEvents.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap mt-2">
           <span
-            style={{
-              ...mono,
-              fontSize: "0.85rem",
-              color: C.textMid,
-            }}
+            className="uppercase tracking-[0.08em]"
+            style={{ ...label, fontSize: "0.5rem", color: C.textGhost }}
           >
-            {topSignal.time_window.label || `${topSignal.time_window.start} – ${topSignal.time_window.end || ""}`}
+            EVENTS:
           </span>
-          <span
-            className="uppercase tracking-[0.1em]"
-            style={{
-              ...label,
-              fontSize: "0.65rem",
-              fontWeight: 500,
-              color: demandColor,
-            }}
-          >
-            DEMANDE ATTENDUE: {getDemandLabel(bestNight.expected_demand)}
-          </span>
+          {analysis.keyEvents.map((event, i) => (
+            <span
+              key={i}
+              style={{
+                ...label,
+                fontSize: "0.6rem",
+                color: C.textDim,
+              }}
+            >
+              {event}{i < analysis.keyEvents.length - 1 ? " ·" : ""}
+            </span>
+          ))}
         </div>
       )}
     </motion.div>
   );
 }
 
-// ── Money Window Card ──
+// ── Day Summary Row ──
 
-function MoneyWindowCard({
+function DaySummaryRow({
   day,
-  signals,
   isExpanded,
   onToggle,
 }: {
   day: WeekCalendar["days"][0];
-  signals: WeekSignal[];
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const topSignal = signals[0];
-  if (!topSignal) return null;
+  const topSignal = day.signals[0];
+  const signalCount = day.signals.length;
 
-  const demandColor = getDemandColor(topSignal.earning_potential);
+  // Compute day intensity
+  const totalIntensity = day.signals.reduce((sum, s) => sum + s.intensity, 0);
+  const avgIntensity = signalCount > 0 ? totalIntensity / signalCount : 0;
+
+  // Day context
+  const dayContext = topSignal
+    ? generateDayContext(topSignal, day.signals)
+    : "Journee calme";
+
+  // Best window time
+  const bestWindow = topSignal?.time_window.label || topSignal?.time_window.start || "";
 
   return (
     <motion.div
@@ -205,106 +343,97 @@ function MoneyWindowCard({
       className="overflow-hidden"
       style={{
         backgroundColor: C.surface,
-        border: `1px solid ${C.border}`,
+        border: `1px solid ${day.is_premium ? C.greenDim : C.border}`,
         borderRadius: 4,
+        borderLeft: day.is_premium ? `3px solid ${C.green}` : `3px solid transparent`,
       }}
     >
-      {/* Header - always visible */}
+      {/* Row header */}
       <button
         onClick={onToggle}
-        className="w-full px-4 py-4 text-left"
+        className="w-full px-4 py-3 text-left flex items-center justify-between"
         style={{
           backgroundColor: "transparent",
           border: "none",
           cursor: "pointer",
         }}
       >
-        {/* Top row */}
-        <div className="flex items-start justify-between mb-1">
-          <span
-            className="uppercase tracking-[0.1em]"
-            style={{
-              ...label,
-              fontSize: "0.5rem",
-              color: C.textGhost,
-            }}
-          >
-            MONEY WINDOW
-          </span>
-          <span
-            style={{
-              ...mono,
-              fontSize: "0.7rem",
-              color: C.textDim,
-            }}
-          >
-            {topSignal.time_window.label || topSignal.time_window.start}
-          </span>
-        </div>
-
-        {/* Day + title */}
-        <div className="flex items-baseline gap-2 mb-1">
+        <div className="flex items-center gap-3">
+          {/* Day name */}
           <span
             style={{
               ...label,
-              fontSize: "1.1rem",
+              fontSize: "0.95rem",
               fontWeight: 500,
               color: C.text,
+              minWidth: 70,
             }}
           >
             {day.day_label}
           </span>
+
+          {/* Context */}
           <span
+            className="truncate"
             style={{
               ...label,
-              fontSize: "0.8rem",
+              fontSize: "0.75rem",
               color: C.textDim,
+              maxWidth: 200,
             }}
           >
-            {topSignal.title}
+            {dayContext}
           </span>
         </div>
 
-        {/* Reason */}
-        <p
-          style={{
-            ...label,
-            fontSize: "0.75rem",
-            color: C.textGhost,
-            margin: 0,
-          }}
-        >
-          {topSignal.reason}
-        </p>
+        <div className="flex items-center gap-3">
+          {/* Window count */}
+          {signalCount > 0 && (
+            <span
+              style={{
+                ...mono,
+                fontSize: "0.65rem",
+                color: C.textGhost,
+              }}
+            >
+              {signalCount} fenetre{signalCount > 1 ? "s" : ""}
+            </span>
+          )}
 
-        {/* Demand + confidence row */}
-        <div className="flex items-center justify-between mt-3">
+          {/* Intensity indicator */}
+          <div className="flex items-center gap-0.5">
+            {[1, 2, 3, 4].map((level) => (
+              <div
+                key={level}
+                style={{
+                  width: 4,
+                  height: 4,
+                  borderRadius: "50%",
+                  backgroundColor: level <= avgIntensity
+                    ? avgIntensity >= 3 ? C.green : C.amber
+                    : `${C.textGhost}30`,
+                }}
+              />
+            ))}
+          </div>
+
+          {/* Chevron */}
           <span
-            className="uppercase tracking-[0.08em]"
             style={{
-              ...label,
-              fontSize: "0.55rem",
-              color: demandColor,
+              color: C.textGhost,
+              fontSize: "0.8rem",
+              transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+              transition: "transform 0.2s ease",
             }}
           >
-            DEMANDE: {getDemandLabel(topSignal.earning_potential)}
-          </span>
-          <span
-            className="uppercase tracking-[0.08em]"
-            style={{
-              ...label,
-              fontSize: "0.55rem",
-              color: C.textDim,
-            }}
-          >
-            CONFIDENCE: {getConfidenceLabel(topSignal.confidence)}
+            ▾
           </span>
         </div>
       </button>
 
-      {/* Expanded detail */}
+      {/* Expanded content */}
       <AnimatePresence>
-        {isExpanded && (
+        {isExpanded && day.signals.length > 0 && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
@@ -313,138 +442,174 @@ function MoneyWindowCard({
             className="px-4 pb-4"
             style={{ borderTop: `1px solid ${C.border}` }}
           >
-            <div className="pt-3">
-              {/* Zones */}
-              <div className="mb-3">
-                <span
-                  className="block mb-1.5 uppercase tracking-[0.1em]"
-                  style={{
-                    ...label,
-                    fontSize: "0.5rem",
-                    color: C.textGhost,
-                  }}
-                >
-                  ZONES
-                </span>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span
-                    className="px-2 py-1"
-                    style={{
-                      ...label,
-                      fontSize: "0.7rem",
-                      color: C.text,
-                      backgroundColor: C.bg,
-                      border: `1px solid ${C.border}`,
-                      borderRadius: 2,
-                    }}
-                  >
-                    {topSignal.zone}
-                  </span>
-                  {/* Show additional zones from other signals */}
-                  {signals.slice(1, 4).map((s, i) => (
-                    <span
-                      key={i}
-                      className="px-2 py-1"
-                      style={{
-                        ...label,
-                        fontSize: "0.7rem",
-                        color: C.textMid,
-                        backgroundColor: C.bg,
-                        border: `1px solid ${C.border}`,
-                        borderRadius: 2,
-                      }}
-                    >
-                      {s.zone}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Strategy - always shown, generated if missing */}
-              <div className="mb-3">
-                <span
-                  className="block mb-1 uppercase tracking-[0.1em]"
-                  style={{
-                    ...label,
-                    fontSize: "0.5rem",
-                    color: C.textGhost,
-                  }}
-                >
-                  STRATEGIE
-                </span>
-                <span
-                  style={{
-                    ...label,
-                    fontSize: "0.8rem",
-                    color: C.text,
-                  }}
-                >
-                  {getStrategy(topSignal)}
-                </span>
-              </div>
-
-              {/* Action recommendation */}
-              <div className="mb-3">
-                <span
-                  className="block mb-1 uppercase tracking-[0.1em]"
-                  style={{
-                    ...label,
-                    fontSize: "0.5rem",
-                    color: C.textGhost,
-                  }}
-                >
-                  ACTION
-                </span>
-                <span
-                  style={{
-                    ...label,
-                    fontSize: "0.8rem",
-                    color: C.text,
-                  }}
-                >
-                  {topSignal.action}
-                </span>
-              </div>
-
-              {/* Amplifiers */}
-              {topSignal.overlapping_factors && topSignal.overlapping_factors.length > 0 && (
-                <div>
-                  <span
-                    className="block mb-1.5 uppercase tracking-[0.1em]"
-                    style={{
-                      ...label,
-                      fontSize: "0.5rem",
-                      color: C.textGhost,
-                    }}
-                  >
-                    AMPLIFIE
-                  </span>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {topSignal.overlapping_factors.map((factor, i) => (
-                      <span
-                        key={i}
-                        className="px-2 py-1 uppercase tracking-[0.06em]"
-                        style={{
-                          ...label,
-                          fontSize: "0.5rem",
-                          color: C.amber,
-                          backgroundColor: `${C.amber}10`,
-                          border: `1px solid ${C.amberDim}`,
-                          borderRadius: 2,
-                        }}
-                      >
-                        {factor}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+            <div className="pt-3 flex flex-col gap-2">
+              {day.signals.map((signal, i) => (
+                <SignalWindowRow key={signal.id || i} signal={signal} />
+              ))}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
     </motion.div>
   );
+}
+
+// ── Signal Window Row (in expanded day) ──
+
+function SignalWindowRow({ signal }: { signal: WeekSignal }) {
+  const demandColor = getDemandColor(signal.earning_potential);
+
+  // Generate ride type hint
+  const rideType = getRideTypeHint(signal);
+
+  return (
+    <div
+      className="flex items-center gap-3 px-3 py-2"
+      style={{
+        backgroundColor: C.bg,
+        border: `1px solid ${C.border}`,
+        borderRadius: 3,
+      }}
+    >
+      {/* Time */}
+      <span
+        style={{
+          ...mono,
+          fontSize: "0.75rem",
+          color: C.textMid,
+          minWidth: 50,
+        }}
+      >
+        {signal.time_window.start || signal.time_window.label}
+      </span>
+
+      {/* Zone + cause */}
+      <div className="flex-1 min-w-0">
+        <span
+          className="block truncate"
+          style={{
+            ...label,
+            fontSize: "0.8rem",
+            color: C.text,
+          }}
+        >
+          {signal.zone || signal.title}
+        </span>
+        <span
+          className="block truncate"
+          style={{
+            ...label,
+            fontSize: "0.65rem",
+            color: C.textDim,
+          }}
+        >
+          {signal.reason || "Demande elevee"}
+        </span>
+      </div>
+
+      {/* Ride type hint */}
+      <span
+        className="px-1.5 py-0.5 uppercase tracking-[0.05em]"
+        style={{
+          ...label,
+          fontSize: "0.5rem",
+          color: C.textDim,
+          backgroundColor: `${C.textGhost}20`,
+          borderRadius: 2,
+        }}
+      >
+        {rideType}
+      </span>
+
+      {/* Demand */}
+      <span
+        className="uppercase tracking-[0.05em]"
+        style={{
+          ...label,
+          fontSize: "0.55rem",
+          color: demandColor,
+        }}
+      >
+        {getDemandLabel(signal.earning_potential).split(" ")[0]}
+      </span>
+    </div>
+  );
+}
+
+// ── Context generators ──
+
+function generateDayContext(topSignal: WeekSignal, allSignals: WeekSignal[]): string {
+  const zones = [...new Set(allSignals.map(s => s.zone))].slice(0, 2);
+  const reason = topSignal.reason || "";
+
+  // Event-based context
+  if (reason.toLowerCase().includes("concert")) {
+    return `Concert ${zones[0] || "Paris"}`;
+  }
+  if (reason.toLowerCase().includes("match")) {
+    return `Match ${zones[0] || ""}`;
+  }
+  if (reason.toLowerCase().includes("spectacle") || reason.toLowerCase().includes("theatre")) {
+    return `Sorties spectacles`;
+  }
+
+  // Time-based context
+  const hour = parseInt(topSignal.time_window.start?.split(":")[0] || "20", 10);
+  if (hour >= 22 || hour < 6) {
+    return `Nuit active ${zones.join(" / ") || "centre"}`;
+  }
+  if (hour >= 18) {
+    return `Soiree ${zones.join(" / ") || "Paris"}`;
+  }
+
+  // Zone-based fallback
+  if (zones.length > 0) {
+    return `Activite ${zones.join(" / ")}`;
+  }
+
+  return "Demande standard";
+}
+
+function getRideTypeHint(signal: WeekSignal): string {
+  const reason = (signal.reason || "").toLowerCase();
+  const zone = (signal.zone || "").toLowerCase();
+  const title = (signal.title || "").toLowerCase();
+
+  // Airport
+  if (zone.includes("cdg") || zone.includes("orly") || reason.includes("aeroport")) {
+    return "AERO";
+  }
+
+  // Train station
+  if (zone.includes("gare") || reason.includes("train")) {
+    return "GARE";
+  }
+
+  // Concert/Event
+  if (reason.includes("concert") || title.includes("concert")) {
+    return "EVENT";
+  }
+
+  // Nightlife
+  if (reason.includes("club") || reason.includes("nuit") || reason.includes("sortie")) {
+    return "NUIT";
+  }
+
+  // Restaurant
+  if (reason.includes("restaurant") || reason.includes("diner")) {
+    return "RESTO";
+  }
+
+  // Business
+  if (reason.includes("affaires") || reason.includes("bureau")) {
+    return "PRO";
+  }
+
+  // Default based on time
+  const hour = parseInt(signal.time_window.start?.split(":")[0] || "20", 10);
+  if (hour >= 22 || hour < 6) return "NUIT";
+  if (hour >= 18) return "SOIR";
+  return "JOUR";
 }
 
 // ── SEMAINE Screen ──
@@ -466,28 +631,20 @@ export function SemaineScreen({ weekCalendar }: SemaineScreenProps) {
             color: C.textGhost,
           }}
         >
-          Calendrier en chargement...
+          Analyse de la semaine...
         </span>
       </div>
     );
   }
 
-  // Find best night's top signal
-  const bestNightDay = weekCalendar.days.find(
-    (d) => d.day_label === weekCalendar.best_night?.day
-  );
-  const bestNightTopSignal = bestNightDay?.signals[0];
+  // Sort days by premium status + signal count
+  const sortedDays = [...weekCalendar.days].sort((a, b) => {
+    if (a.is_premium !== b.is_premium) return a.is_premium ? -1 : 1;
+    return b.signals.length - a.signals.length;
+  });
 
-  // Filter days with signals
-  const daysWithSignals = weekCalendar.days.filter(
-    (d) => d.signals.length > 0
-  );
-
-  // Count windows
-  const windowCount = daysWithSignals.reduce(
-    (sum, d) => sum + d.signals.length,
-    0
-  );
+  const totalWindows = weekCalendar.days.reduce((sum, d) => sum + d.signals.length, 0);
+  const premiumNights = weekCalendar.days.filter(d => d.is_premium).length;
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -507,47 +664,54 @@ export function SemaineScreen({ weekCalendar }: SemaineScreenProps) {
         >
           SEMAINE
         </span>
-        <span
-          style={{
-            ...mono,
-            fontSize: "0.7rem",
-            color: C.textDim,
-          }}
-        >
-          {windowCount} fenetres
-        </span>
+        <div className="flex items-center gap-3">
+          <span
+            style={{
+              ...mono,
+              fontSize: "0.65rem",
+              color: C.textDim,
+            }}
+          >
+            {totalWindows} fenetres
+          </span>
+          {premiumNights > 0 && (
+            <span
+              className="px-1.5 py-0.5"
+              style={{
+                ...label,
+                fontSize: "0.5rem",
+                color: C.green,
+                backgroundColor: `${C.green}12`,
+                borderRadius: 2,
+              }}
+            >
+              {premiumNights} nuit{premiumNights > 1 ? "s" : ""} premium
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 py-4">
-        <div className="flex flex-col gap-4">
-          {/* Best Night */}
-          {weekCalendar.best_night && (
-            <BestNightCard
-              bestNight={weekCalendar.best_night}
-              topSignal={bestNightTopSignal}
+      <div className="flex-1 overflow-y-auto">
+        {/* Week briefing */}
+        <WeekBriefing calendar={weekCalendar} />
+
+        {/* Day rows */}
+        <div className="px-4 py-4 flex flex-col gap-2">
+          {sortedDays.map((day) => (
+            <DaySummaryRow
+              key={day.day_of_week}
+              day={day}
+              isExpanded={expandedDay === day.day_of_week}
+              onToggle={() =>
+                setExpandedDay(
+                  expandedDay === day.day_of_week ? null : day.day_of_week
+                )
+              }
             />
-          )}
+          ))}
 
-          {/* Other days */}
-          {daysWithSignals
-            .filter((d) => d.day_label !== weekCalendar.best_night?.day)
-            .map((day) => (
-              <MoneyWindowCard
-                key={day.day_of_week}
-                day={day}
-                signals={day.signals}
-                isExpanded={expandedDay === day.day_of_week}
-                onToggle={() =>
-                  setExpandedDay(
-                    expandedDay === day.day_of_week ? null : day.day_of_week
-                  )
-                }
-              />
-            ))}
-
-          {/* Empty state */}
-          {daysWithSignals.length === 0 && (
+          {sortedDays.length === 0 && (
             <div className="py-12 text-center">
               <span
                 style={{
