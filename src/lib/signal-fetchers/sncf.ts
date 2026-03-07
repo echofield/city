@@ -90,11 +90,12 @@ export interface StationSignal {
 let stationsCache: StationConfig[] | null = null
 
 // Static station config (embedded to avoid fs issues in serverless)
+// stop_area IDs verified via SNCF API /stop_areas?q=gare
 const PARIS_STATIONS: StationConfig[] = [
   {
     id: "gare_du_nord",
     name: "Gare du Nord",
-    stop_area_id: "stop_area:SNCF:87271007",
+    stop_area_id: "stop_area:SNCF:87271007",  // Verified UIC: 8727100
     uic_code: "87271007",
     flow_zone: "10",
     corridor: "nord",
@@ -150,21 +151,6 @@ const PARIS_STATIONS: StationConfig[] = [
     train_types: ["intercites", "ter", "transilien"],
     peak_hours: ["07:30-09:30", "17:30-19:30"],
     capacity_factor: 1.0,
-  },
-  {
-    id: "gare_de_lest",
-    name: "Gare de l'Est",
-    stop_area_id: "stop_area:SNCF:87113001",
-    uic_code: "87113001",
-    flow_zone: "10",
-    corridor: "nord",
-    lat: 48.8768,
-    lng: 2.3590,
-    entry_hint: "Parvis de la Gare",
-    ride_profile: "TGV Est, ICE — international",
-    train_types: ["tgv", "ice", "ter", "transilien"],
-    peak_hours: ["07:00-09:30", "17:00-20:00"],
-    capacity_factor: 1.1,
   },
 ]
 
@@ -326,6 +312,36 @@ export async function fetchStationArrivals(
   }
 }
 
+// ── Forced Mobility Detection ──
+// The real intelligence: demand is strongest when people are FORCED to use VTC
+// Formula: people_released × transport_weakness × time_pressure = forced_mobility
+
+function computeTransportWeakness(hour: number): number {
+  // Metro runs ~05:30-00:30, weakens after 23:00
+  // Highest weakness: 00:30 - 05:30 (no metro)
+  // Medium weakness: 23:00 - 00:30 (last metros, unreliable)
+  // Low weakness: 05:30 - 23:00 (full service)
+
+  if (hour >= 1 && hour < 5) return 1.0    // No metro at all
+  if (hour >= 0 && hour < 1) return 0.8    // Last metros gone
+  if (hour >= 23 || hour === 0) return 0.6 // Weakening service
+  if (hour >= 22) return 0.3               // Reduced frequency
+  return 0.1                                // Full metro service
+}
+
+function computeTimePressure(hour: number, isWeekend: boolean): number {
+  // Late arrivals = higher pressure (people want to get home)
+  // Weekend late = slightly lower (less urgency)
+
+  const baseMultiplier = isWeekend ? 0.8 : 1.0
+
+  if (hour >= 22 || hour < 2) return 1.0 * baseMultiplier   // Late night = high pressure
+  if (hour >= 20) return 0.7 * baseMultiplier               // Evening
+  if (hour >= 7 && hour < 10) return 0.8 * baseMultiplier   // Morning rush
+  if (hour >= 17 && hour < 20) return 0.7 * baseMultiplier  // Evening rush
+  return 0.4 * baseMultiplier                                // Daytime = low pressure
+}
+
 // ── Pressure Computation ──
 
 export function computeStationPressure(
@@ -358,28 +374,51 @@ export function computeStationPressure(
     0
   )
 
-  // Compute score (0-100)
-  // Base: 0-3 trains = low, 4-8 = medium, 9+ = high
-  // Modulated by: international, delays, capacity factor
-  let score = Math.min(100, windowArrivals.length * 10)
+  // ═══════════════════════════════════════════════════════════════
+  // FORCED MOBILITY SCORING
+  // Not just "demand" but "demand where VTC is the only good option"
+  // ═══════════════════════════════════════════════════════════════
 
-  // Boost for international trains
+  const hour = firstArrival.getHours()
+  const isWeekend = firstArrival.getDay() === 0 || firstArrival.getDay() === 6
+
+  // 1. Base score from volume
+  let baseScore = Math.min(50, windowArrivals.length * 8)
+
+  // 2. International trains = longer rides, less metro-friendly destinations
   const internationalCount = windowArrivals.filter(a => a.isInternational).length
-  score += internationalCount * 5
+  const internationalBoost = internationalCount * 8
 
-  // Boost for delays (concentrated arrivals)
+  // 3. Delays = concentrated wave, people are tired/frustrated
   const hasDelay = windowArrivals.some(a => a.delayMinutes > 5)
-  if (hasDelay) score += 10
+  const delayBoost = hasDelay ? 12 : 0
 
-  // Apply station capacity factor
-  score = Math.round(score * station.capacity_factor)
-  score = Math.min(100, score)
+  // 4. Transport weakness multiplier (the key insight)
+  const transportWeakness = computeTransportWeakness(hour)
+
+  // 5. Time pressure multiplier
+  const timePressure = computeTimePressure(hour, isWeekend)
+
+  // 6. Station capacity factor
+  const capacityFactor = station.capacity_factor
+
+  // Final formula: base + boosts, then multiply by weakness and pressure
+  const rawScore = baseScore + internationalBoost + delayBoost
+  let score = rawScore * (1 + transportWeakness) * (1 + timePressure * 0.3) * capacityFactor
+
+  // Normalize to 0-100
+  score = Math.round(Math.min(100, Math.max(0, score)))
 
   // Determine intensity label
   let intensity: StationPressure['intensity'] = 'low'
   if (score >= 70) intensity = 'very_high'
   else if (score >= 50) intensity = 'high'
   else if (score >= 30) intensity = 'medium'
+
+  // Log for debugging forced mobility detection
+  if (transportWeakness > 0.5) {
+    console.log(`[SNCF] Forced mobility detected at ${station.name}: weakness=${transportWeakness.toFixed(2)}, pressure=${timePressure.toFixed(2)}, score=${score}`)
+  }
 
   return {
     stationId: station.id,
@@ -405,7 +444,21 @@ export function computeStationPressure(
 // ── Convert to Flow Signal ──
 
 export function pressureToSignal(pressure: StationPressure): StationSignal {
-  const now = new Date().toISOString()
+  const now = new Date()
+  const windowStart = new Date(pressure.windowStart)
+  const hour = windowStart.getHours()
+
+  // Detect forced mobility scenario
+  const transportWeakness = computeTransportWeakness(hour)
+  const isForcedMobility = transportWeakness >= 0.5
+
+  // Enhance ride profile for forced mobility
+  let rideProfile = pressure.rideProfile
+  if (isForcedMobility && pressure.hasInternational) {
+    rideProfile = "Metro fermé + international — courses longues garanties"
+  } else if (isForcedMobility) {
+    rideProfile = "Alternatives faibles — VTC privilégié"
+  }
 
   return {
     type: 'station_arrival',
@@ -421,14 +474,14 @@ export function pressureToSignal(pressure: StationPressure): StationSignal {
     intensity: pressure.score / 100,
     confidence: 0.95, // SNCF realtime is authoritative
     source: 'sncf_realtime',
-    compiledAt: now,
+    compiledAt: now.toISOString(),
     ttl: 180, // 3 minutes - trains move fast
     arrivalCount: pressure.arrivalCount,
     estimatedPassengers: pressure.totalPassengers,
     hasInternational: pressure.hasInternational,
     hasDelay: pressure.hasDelay,
     entryHint: pressure.entryHint,
-    rideProfile: pressure.rideProfile,
+    rideProfile,
     lat: pressure.lat,
     lng: pressure.lng,
   }
