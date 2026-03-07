@@ -1,716 +1,1075 @@
-// FLOW v2 — Dashboard: 3-screen architecture
-// [LIVE] [CARTE] [SEMAINE] — bottom nav, always visible
-// Dispatch moves to secondary menu.
-// Signal model normalizes all intelligence before rendering.
+// FLOW — Dashboard: The Instrument
+// 1 screen. 1 state. 1 action.
+// Every pixel serves the chauffeur's next 30 seconds.
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useNavigate } from "react-router";
-import { LiveFeed } from "./LiveFeed";
-import { CartePage } from "./CartePage";
-import { SemainePage } from "./SemainePage";
-import { RadarPage } from "./RadarPage";
-import { DispatchModal } from "./DispatchModal";
-import { GlanceMode } from "./GlanceMode";
+import { FlowMap } from "./FlowMap";
+import { DispatchPanel } from "./DispatchPanel";
 import {
-  computeFlowState,
-  computeBanlieueHubStates,
-  buildSignals,
-  buildWeekSignals,
-  ANCHOR_OPTIONS,
   type FlowState,
-  type FlowSignal,
-  type WeekSignal,
-  type DriverAnchor,
-  type BanlieueHubState,
-} from "./FlowEngine";
-import { fetchTrainWaves, type TrainWave, type SncfDataSource } from "./SncfService";
-import { computeForcedMobilityWaves, type ForcedMobilitySnapshot } from "./ForcedMobilityEngine";
-import { C, label, mono } from "./theme";
-import { CONFIG } from "../../config";
-import { useFlowApi } from "../../hooks/useFlowApi";
-
-// ── Types ──
-
-type Screen = "live" | "radar" | "carte" | "semaine";
-
-/** Data source status for UI feedback */
-interface DataStatus {
-  source: 'local' | 'api';
-  loading: boolean;
-  error: string | null;
-  stale: boolean;
-  lastUpdated: Date | null;
-}
+  type ActionType,
+  type ShiftPhase,
+  type WindowState,
+  formatCountdown,
+  zoneStateApiToDisplay,
+  engineStateToApiState,
+} from "../types/flow-state";
+import { fetchFlowState, fetchFlowStateMock } from "../api/flow";
+import { computeFlowState, computeContextSignals } from "./FlowEngine";
+import { C, mono, label } from "./theme";
 
 // ── Helpers ──
 
-function getSessionStart(): number {
-  try {
-    const raw = sessionStorage.getItem("flow-prefs");
-    if (raw) {
-      const prefs = JSON.parse(raw);
-      if (prefs.startedAt) return prefs.startedAt;
-    }
-  } catch { /* ignore */ }
-  return Date.now();
+function getActionColor(action: ActionType): string {
+  switch (action) {
+    case "move": return C.greenBright;
+    case "prepare": return C.amber;
+    case "hold": return C.textMid;
+    case "rest": return C.grayDim;
+  }
 }
 
-function getAnchor(): DriverAnchor {
-  try {
-    const raw = sessionStorage.getItem("flow-prefs");
-    if (raw) {
-      const prefs = JSON.parse(raw);
-      if (prefs.anchorId) {
-        const found = ANCHOR_OPTIONS.find((a) => a.id === prefs.anchorId);
-        if (found) return found;
-      }
-    }
-  } catch { /* ignore */ }
-  return ANCHOR_OPTIONS[2]; // Chatelet
+function getWindowColor(ws: WindowState): string {
+  switch (ws) {
+    case "active": return C.green;
+    case "forming": return C.amber;
+    case "closing": return C.amberDim;
+    case "stable": return C.grayDim;
+  }
 }
 
-// ── Data Status Overlay ──
-// Shows loading spinner, stale warning, or error message
+function formatTime(date: Date): string {
+  return date.toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
 
-function DataStatusOverlay({ status }: { status: DataStatus }) {
-  // Only show overlay for significant states
-  const showLoading = status.source === 'api' && status.loading && !status.lastUpdated;
-  const showError = status.source === 'api' && status.error && !status.lastUpdated;
-  const showStale = status.source === 'api' && status.stale && status.lastUpdated;
+function formatDuration(ms: number): string {
+  const totalMin = Math.floor(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return h > 0 ? `${h}h${String(m).padStart(2, "0")}` : `${m}min`;
+}
 
-  if (!showLoading && !showError && !showStale) return null;
+/** Map confidence (0–100) to certainty tone: no numbers, instrument grammar. */
+function getCertaintyTone(confidence: number): "Clair" | "En formation" | "Instable" | "Retrait" {
+  if (confidence >= 70) return "Clair";
+  if (confidence >= 45) return "En formation";
+  if (confidence >= 25) return "Instable";
+  return "Retrait";
+}
+
+/** Derive single highest-confidence "tonight" line from FlowState (peaks > upcoming > signals). */
+function getTonightAnchor(state: FlowState): string | null {
+  const peaks = state.peaks ?? [];
+  if (peaks.length > 0) {
+    const best = peaks.reduce((a, b) => (a.score >= b.score ? a : b));
+    const condition = best.time || best.reason || "";
+    return condition ? `Ce soir — ${best.zone} · ${condition}` : `Ce soir — ${best.zone}`;
+  }
+  const upcoming = state.upcoming ?? [];
+  if (upcoming.length > 0) {
+    const best = upcoming.reduce((a, b) => (a.saturation >= b.saturation ? a : b));
+    return `Ce soir — ${best.zone} · ${best.time}`;
+  }
+  const signals = state.signals ?? [];
+  if (signals.length > 0) {
+    const first = signals[0];
+    return first?.text ? `Ce soir — ${first.text}` : null;
+  }
+  return null;
+}
+
+type TabId = "maintenant" | "prochain" | "cesoir" | "complet";
+
+// ── Shift Arc ──
+
+function ShiftArc({ phase, progress }: { phase: ShiftPhase; progress: number }) {
+  const phases: { id: ShiftPhase; label: string }[] = [
+    { id: "calme", label: "CALME" },
+    { id: "montee", label: "MONTEE" },
+    { id: "pic", label: "PIC" },
+    { id: "dispersion", label: "DISPERSION" },
+  ];
+  const idx = phases.findIndex((p) => p.id === phase);
+  const starts = [0, 0.2, 0.5, 0.75];
+  const ends = [0.2, 0.5, 0.75, 1.0];
+  const inPhase = idx >= 0 ? Math.min(1, (progress - starts[idx]) / (ends[idx] - starts[idx])) : 0;
 
   return (
-    <AnimatePresence>
-      {showLoading && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="absolute inset-0 flex items-center justify-center z-50"
-          style={{ backgroundColor: 'rgba(10, 10, 11, 0.85)' }}
-        >
-          <div className="flex flex-col items-center gap-3">
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
+    <div className="flex items-center w-full gap-1">
+      {phases.map((p, i) => {
+        const isCurrent = i === idx;
+        const isPast = i < idx;
+        const color = isCurrent
+          ? (phase === "pic" ? C.green : C.amber)
+          : isPast ? C.grayDim : C.textGhost;
+
+        return (
+          <div key={p.id} className="flex items-center gap-1 flex-1">
+            <div className="flex flex-col items-center" style={{ minWidth: 8 }}>
+              <div
+                style={{
+                  width: isCurrent ? 8 : 5,
+                  height: isCurrent ? 8 : 5,
+                  borderRadius: "50%",
+                  backgroundColor: color,
+                  transition: "all 0.5s ease",
+                }}
+              />
+            </div>
+            <span
+              className="uppercase tracking-[0.15em] hidden sm:inline"
               style={{
-                width: 24,
-                height: 24,
-                border: `2px solid ${C.textGhost}`,
-                borderTopColor: C.green,
-                borderRadius: '50%',
+                fontFamily: "'Inter', sans-serif",
+                fontSize: "0.55rem",
+                fontWeight: 400,
+                color,
+                transition: "color 0.5s ease",
               }}
-            />
-            <span
-              className="uppercase tracking-[0.3em]"
-              style={{ ...mono, fontSize: '0.4rem', color: C.textDim }}
             >
-              CHARGEMENT
+              {p.label}
             </span>
-          </div>
-        </motion.div>
-      )}
-
-      {showError && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="absolute inset-0 flex items-center justify-center z-50"
-          style={{ backgroundColor: 'rgba(10, 10, 11, 0.85)' }}
-        >
-          <div className="flex flex-col items-center gap-3 px-6 text-center">
-            <span style={{ fontSize: '1.5rem', color: C.red }}>!</span>
-            <span
-              className="uppercase tracking-[0.2em]"
-              style={{ ...mono, fontSize: '0.45rem', color: C.red }}
-            >
-              ERREUR API
-            </span>
-            <span style={{ ...label, fontSize: '0.5rem', color: C.textDim, maxWidth: 200 }}>
-              {status.error}
-            </span>
-          </div>
-        </motion.div>
-      )}
-
-      {showStale && (
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -20 }}
-          className="absolute top-14 left-1/2 -translate-x-1/2 z-40 px-3 py-1.5"
-          style={{
-            backgroundColor: 'rgba(10, 10, 11, 0.95)',
-            border: `1px solid ${C.amber}40`,
-            borderRadius: 4,
-          }}
-        >
-          <span
-            className="uppercase tracking-[0.15em]"
-            style={{ ...mono, fontSize: '0.35rem', color: C.amber }}
-          >
-            DONNEES ANCIENNES
-          </span>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}
-
-// ── Debug Comparison Panel (dev-only) ──
-// Shows local vs API signal summary for verification
-
-function DebugComparisonPanel({
-  localSignals,
-  apiSignals,
-  apiLoading,
-  apiError,
-}: {
-  localSignals: FlowSignal[];
-  apiSignals: FlowSignal[];
-  apiLoading: boolean;
-  apiError: string | null;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  if (!CONFIG.DEBUG) return null;
-
-  return (
-    <div
-      className="fixed bottom-16 right-2 z-50"
-      style={{
-        backgroundColor: 'rgba(10, 10, 11, 0.95)',
-        border: `1px solid ${C.border}`,
-        borderRadius: 4,
-        fontSize: '0.35rem',
-        fontFamily: "'JetBrains Mono', monospace",
-        maxWidth: expanded ? 320 : 80,
-        transition: 'max-width 0.2s ease',
-      }}
-    >
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-2 py-1 text-left uppercase tracking-widest"
-        style={{ color: C.textDim, cursor: 'pointer', background: 'none', border: 'none' }}
-      >
-        {expanded ? 'DEBUG ▼' : 'DBG'}
-      </button>
-
-      {expanded && (
-        <div className="px-2 pb-2 flex flex-col gap-1">
-          {/* Mode */}
-          <div className="flex items-center justify-between">
-            <span style={{ color: C.textGhost }}>Mode:</span>
-            <span style={{ color: CONFIG.USE_API ? C.green : C.textMid }}>
-              {CONFIG.USE_API ? 'API' : 'LOCAL'}
-            </span>
-          </div>
-
-          {/* API Status */}
-          {CONFIG.USE_API && (
-            <div className="flex items-center justify-between">
-              <span style={{ color: C.textGhost }}>API:</span>
-              <span style={{ color: apiError ? C.red : apiLoading ? C.amber : C.green }}>
-                {apiError ? 'ERR' : apiLoading ? 'LOAD' : 'OK'}
-              </span>
-            </div>
-          )}
-
-          {/* Signal counts */}
-          <div className="flex items-center justify-between">
-            <span style={{ color: C.textGhost }}>Local signals:</span>
-            <span style={{ color: C.textMid }}>{localSignals.length}</span>
-          </div>
-
-          {CONFIG.USE_API && (
-            <div className="flex items-center justify-between">
-              <span style={{ color: C.textGhost }}>API signals:</span>
-              <span style={{ color: C.textMid }}>{apiSignals.length}</span>
-            </div>
-          )}
-
-          {/* Top signal comparison */}
-          {localSignals.length > 0 && (
-            <div className="pt-1 border-t" style={{ borderColor: C.border }}>
-              <span style={{ color: C.textGhost }}>Local top:</span>
-              <div style={{ color: C.textMid }}>
-                {localSignals[0].zone} ({Math.round(localSignals[0].confidence * 100)})
+            {i < phases.length - 1 && (
+              <div className="flex-1 relative" style={{ height: 1, backgroundColor: C.textGhost }}>
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    height: 1,
+                    backgroundColor: isPast ? C.grayDim : isCurrent ? color : "transparent",
+                    width: isPast ? "100%" : isCurrent ? `${inPhase * 100}%` : "0%",
+                    transition: "width 1s ease",
+                  }}
+                />
               </div>
-            </div>
-          )}
-
-          {CONFIG.USE_API && apiSignals.length > 0 && (
-            <div className="pt-1">
-              <span style={{ color: C.textGhost }}>API top:</span>
-              <div style={{ color: C.textMid }}>
-                {apiSignals[0].zone} ({Math.round(apiSignals[0].confidence * 100)})
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-// ── Component ──
+// ── Saturation Bar ──
 
-export function Dashboard() {
+function SatBar({ value }: { value: number }) {
+  const blocks = 4;
+  const filled = Math.round((value / 100) * blocks);
+  const color = value > 70 ? C.red : value > 45 ? C.amber : C.green;
+  return (
+    <div className="flex gap-0.5 items-center">
+      {Array.from({ length: blocks }).map((_, i) => (
+        <div
+          key={i}
+          style={{
+            width: 6,
+            height: 10,
+            backgroundColor: i < filled ? color : C.textGhost,
+            borderRadius: 1,
+            transition: "background-color 0.3s ease",
+          }}
+        />
+      ))}
+      <span
+        style={{
+          ...mono,
+          fontSize: "0.6rem",
+          fontWeight: 300,
+          color: C.textDim,
+          marginLeft: 4,
+        }}
+      >
+        {value}%
+      </span>
+    </div>
+  );
+}
+
+// ── Stat Card ──
+
+function StatCard({
+  cardLabel,
+  value,
+  highlight,
+}: {
+  cardLabel: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className="flex flex-col gap-1 px-3 py-2.5"
+      style={{
+        backgroundColor: C.surface,
+        border: `1px solid ${C.border}`,
+        borderRadius: 3,
+      }}
+    >
+      <span style={{ ...label, color: C.textDim, fontSize: "0.6rem" }}>
+        {cardLabel}
+      </span>
+      <span
+        style={{
+          ...mono,
+          fontSize: "clamp(0.85rem, 2vw, 1.1rem)",
+          fontWeight: 500,
+          color: highlight ? C.green : C.text,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// ── Dashboard ──
+
+export type DataSource = "live" | "live_stale" | "simulated";
+
+const STALE_THRESHOLD_MS = 30_000;
+
+export function Dashboard(props: {
+  demoMode?: boolean;
+  pollIntervalMs?: number;
+  showActivationOverlayAfterMs?: number;
+}) {
+  const {
+    demoMode = false,
+    pollIntervalMs = 2000,
+    showActivationOverlayAfterMs,
+  } = props;
   const navigate = useNavigate();
-  const sessionStartRef = useRef(getSessionStart());
-  const anchorRef = useRef(getAnchor());
-
-  // State
-  const [screen, setScreen] = useState<Screen>("carte");
-  const [localFlow, setLocalFlow] = useState<FlowState>(() =>
-    computeFlowState(sessionStartRef.current, anchorRef.current)
-  );
-  const [localBanlieueHubs, setLocalBanlieueHubs] = useState<Record<string, BanlieueHubState>>(() =>
-    computeBanlieueHubStates(sessionStartRef.current)
-  );
-  const [localSignals, setLocalSignals] = useState<FlowSignal[]>([]);
-  const [weekSignals] = useState<WeekSignal[]>(() => buildWeekSignals());
+  const [flowState, setFlowState] = useState<FlowState | null>(null);
+  const [dataSource, setDataSource] = useState<DataSource>("simulated");
   const [breathPhase, setBreathPhase] = useState(0);
-  const [driverPos, setDriverPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [entered, setEntered] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>("maintenant");
+  const [showActivationOverlay, setShowActivationOverlay] = useState(false);
   const [showDispatch, setShowDispatch] = useState(false);
-  const [showMenu, setShowMenu] = useState(false);
-  const [showGlance, setShowGlance] = useState(false);
-  const [trainWaves, setTrainWaves] = useState<TrainWave[]>([]);
-  const [sncfSource, setSncfSource] = useState<SncfDataSource>("unavailable");
-  const fmwRef = useRef<ForcedMobilitySnapshot | undefined>(undefined);
+  const [isOffline, setIsOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
+  const sessionStartRef = useRef(Date.now());
+  const animFrameRef = useRef(0);
+  const hasEverSucceededRef = useRef(false);
+  const staleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const demoMountedRef = useRef(0);
+  const hasInteractedRef = useRef(false);
 
-  const animRef = useRef(0);
-
-  // ── API Integration (when enabled) ──
-  const apiResult = useFlowApi({
-    sessionStart: sessionStartRef.current,
-    position: driverPos ?? undefined,
-    refreshInterval: CONFIG.REFRESH_INTERVAL,
-    skip: !CONFIG.USE_API,
-  });
-
-  // Determine data source: API or local computation
-  const flow = CONFIG.USE_API && apiResult.flow ? apiResult.flow : localFlow;
-  const signals = CONFIG.USE_API && apiResult.signals.length > 0 ? apiResult.signals : localSignals;
-  const banlieueHubs = CONFIG.USE_API ? apiResult.banlieueHubs : localBanlieueHubs;
-  const apiTrainWaves = CONFIG.USE_API ? apiResult.trainWaves : trainWaves;
-
-  // Compute data status for UI feedback
-  const dataStatus: DataStatus = CONFIG.USE_API
-    ? {
-        source: 'api',
-        loading: apiResult.loading,
-        error: apiResult.error,
-        stale: apiResult.lastUpdated
-          ? Date.now() - apiResult.lastUpdated.getTime() > CONFIG.REFRESH_INTERVAL * 2
-          : false,
-        lastUpdated: apiResult.lastUpdated,
-      }
-    : {
-        source: 'local',
-        loading: false,
-        error: null,
-        stale: false,
-        lastUpdated: new Date(),
-      };
-
-  // Breath animation (60fps sin wave)
   useEffect(() => {
-    let t = 0;
-    const tick = () => {
-      t += 0.01;
-      setBreathPhase(Math.sin(t) * 0.5 + 0.5);
-      animRef.current = requestAnimationFrame(tick);
+    if (typeof navigator === "undefined") return;
+    const onOffline = () => setIsOffline(true);
+    const onOnline = () => setIsOffline(false);
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
+    return () => {
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online", onOnline);
     };
-    animRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animRef.current);
   }, []);
 
-  // SNCF train data polling (60-120s refresh) — only when using local engine
-  const trainWavesRef = useRef<TrainWave[]>([]);
   useEffect(() => {
-    if (CONFIG.USE_API) return; // Skip SNCF polling when API provides data
-
-    let active = true;
-    const poll = async () => {
+    // Check if user went through onboarding
+    const prefs = sessionStorage.getItem("flow-prefs");
+    if (prefs) {
       try {
-        const snapshot = await fetchTrainWaves();
-        if (active) {
-          trainWavesRef.current = snapshot.waves;
-          setTrainWaves(snapshot.waves);
-          setSncfSource(snapshot.source);
+        const parsed = JSON.parse(prefs);
+        if (parsed.startedAt) {
+          sessionStartRef.current = parsed.startedAt;
         }
-      } catch { /* degrade silently */ }
-    };
-    poll(); // initial
-    const id = window.setInterval(poll, 90000); // 90s
-    return () => { active = false; clearInterval(id); };
+      } catch { /* use default */ }
+    }
   }, []);
 
-  // Flow state refresh (lazy 2s tick) — only when using local engine
   useEffect(() => {
-    if (CONFIG.USE_API) return; // Skip local computation when API is enabled
+    let active = true;
 
-    const update = () => {
-      const waves = trainWavesRef.current;
-      // Compute Forced Mobility Waves
-      const fmw = computeForcedMobilityWaves(waves);
-      fmwRef.current = fmw;
-      const f = computeFlowState(sessionStartRef.current, anchorRef.current, waves, fmw);
-      setLocalFlow(f);
-      setLocalBanlieueHubs(computeBanlieueHubStates(sessionStartRef.current));
-      setLocalSignals(buildSignals(f, anchorRef.current, waves, fmw));
+    const fallbackToSimulated = () => {
+      setFlowState(engineStateToApiState(computeFlowState(sessionStartRef.current)));
+      setDataSource("simulated");
+      setCurrentTime(new Date());
     };
-    update(); // initial
-    const id = window.setInterval(update, 2000);
-    return () => clearInterval(id);
-  }, []);
 
-  // Geolocation
-  useEffect(() => {
-    if (!navigator.geolocation) return;
-    const id = navigator.geolocation.watchPosition(
-      (pos) => setDriverPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => setDriverPos({ lat: anchorRef.current.lat, lng: anchorRef.current.lng }),
-      { enableHighAccuracy: true, maximumAge: 5000 }
-    );
-    return () => navigator.geolocation.clearWatch(id);
-  }, []);
-
-  // Auto-Glance Mode on landscape orientation
-  useEffect(() => {
-    const mq = window.matchMedia("(orientation: landscape) and (max-height: 500px)");
-    const handler = (e: MediaQueryListEvent | MediaQueryList) => {
-      if (e.matches) setShowGlance(true);
+    const poll = async () => {
+      if (!active) return;
+      try {
+        const state = (await (demoMode ? fetchFlowStateMock(sessionStartRef.current) : fetchFlowState(sessionStartRef.current))) as FlowState;
+        if (!active) return;
+        if (staleTimeoutRef.current) {
+          clearTimeout(staleTimeoutRef.current);
+          staleTimeoutRef.current = null;
+        }
+        hasEverSucceededRef.current = true;
+        // Merge locally-computed signals (metro status) with API signals
+        const localSignals = computeContextSignals();
+        const mergedSignals = [...localSignals, ...(state.signals ?? [])];
+        setFlowState({ ...state, signals: mergedSignals });
+        setDataSource("live");
+        setCurrentTime(new Date());
+      } catch {
+        if (!active) return;
+        if (hasEverSucceededRef.current) {
+          setDataSource("live_stale");
+          if (!staleTimeoutRef.current) {
+            staleTimeoutRef.current = setTimeout(() => {
+              staleTimeoutRef.current = null;
+              fallbackToSimulated();
+            }, STALE_THRESHOLD_MS);
+          }
+        } else {
+          fallbackToSimulated();
+        }
+      }
     };
-    // Don't auto-activate on first mount — only on orientation change
-    mq.addEventListener("change", handler as (e: MediaQueryListEvent) => void);
-    return () => mq.removeEventListener("change", handler as (e: MediaQueryListEvent) => void);
+
+    poll();
+    const id = setInterval(poll, pollIntervalMs);
+    const t = setTimeout(() => setEntered(true), 80);
+    return () => {
+      active = false;
+      clearInterval(id);
+      clearTimeout(t);
+      if (staleTimeoutRef.current) clearTimeout(staleTimeoutRef.current);
+    };
   }, []);
 
-  // ── Screen tabs ──
-  const SCREENS: { id: Screen; label: string }[] = [
-    { id: "carte", label: "CARTE" },
-    { id: "live", label: "LIVE" },
-    { id: "radar", label: "RADAR" },
-    { id: "semaine", label: "SEMAINE" },
+  // Demo: activation overlay after 75s OR 35s + engagement (scroll/click/tap)
+  useEffect(() => {
+    if (!showActivationOverlayAfterMs || showActivationOverlay) return;
+    demoMountedRef.current = Date.now();
+    const onInteract = () => { hasInteractedRef.current = true; };
+    window.addEventListener("click", onInteract, { once: true });
+    window.addEventListener("touchstart", onInteract, { once: true });
+    window.addEventListener("scroll", onInteract, { once: true, passive: true });
+    const id = setInterval(() => {
+      const elapsed = Date.now() - demoMountedRef.current;
+      if (elapsed >= showActivationOverlayAfterMs || (elapsed >= 35000 && hasInteractedRef.current)) {
+        setShowActivationOverlay(true);
+        clearInterval(id);
+      }
+    }, 1000);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("click", onInteract);
+      window.removeEventListener("touchstart", onInteract);
+      window.removeEventListener("scroll", onInteract);
+    };
+  }, [showActivationOverlayAfterMs, showActivationOverlay]);
+
+  useEffect(() => {
+    let active = true;
+    let breathT = 0;
+    const tick = () => {
+      if (!active) return;
+      breathT += 0.01;
+      setBreathPhase(Math.sin(breathT) * 0.5 + 0.5);
+      animFrameRef.current = requestAnimationFrame(tick);
+    };
+    animFrameRef.current = requestAnimationFrame(tick);
+    return () => {
+      active = false;
+      cancelAnimationFrame(animFrameRef.current);
+    };
+  }, []);
+
+  const tonightAnchor = useMemo(
+    () => (flowState ? getTonightAnchor(flowState) : null),
+    [flowState]
+  );
+
+  if (!flowState) {
+    return <div className="h-screen w-screen" style={{ backgroundColor: C.bg }} />;
+  }
+
+  const actionColor = getActionColor(flowState.action ?? "hold");
+  const windowColor = getWindowColor(flowState.windowState ?? "stable");
+  const fieldActive = flowState.windowState === "active" || flowState.windowState === "forming";
+
+  const tabs: { id: TabId; label: string; full: string }[] = [
+    { id: "maintenant", label: "MAINT.", full: "MAINTENANT" },
+    { id: "prochain", label: "PROCH.", full: "PROCHAIN" },
+    { id: "cesoir", label: "CE SOIR", full: "CE SOIR" },
+    { id: "complet", label: "COMPLET", full: "COMPLET" },
   ];
 
   return (
     <div
-      className="h-screen w-screen flex flex-col overflow-hidden"
+      className="h-screen w-screen flex flex-col overflow-hidden relative"
       style={{ backgroundColor: C.bg, color: C.text }}
     >
-      {/* ── Top bar: FLOW identifier + clock ── */}
-      <div
-        className="shrink-0 flex items-center justify-between px-4 py-1.5"
+      {/* ── Header ── */}
+      <motion.div
+        className="shrink-0 flex items-center justify-between px-4 sm:px-6 lg:px-8 py-2.5 sm:py-3"
         style={{ borderBottom: `1px solid ${C.border}` }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: entered ? 1 : 0 }}
+        transition={{ duration: 0.5 }}
       >
-        <div className="flex items-center gap-1.5">
-          <span
-            className="uppercase tracking-[0.35em]"
-            style={{ ...label, fontSize: "0.45rem", fontWeight: 500, color: C.textDim }}
-          >
-            FLOW
-          </span>
+        <div className="flex items-center gap-3">
           <div
             style={{
-              width: 3,
-              height: 3,
+              width: 6,
+              height: 6,
               borderRadius: "50%",
-              backgroundColor: flow.shiftPhase === "pic" ? C.green : flow.shiftPhase === "montee" ? C.amber : C.textDim,
+              backgroundColor: fieldActive ? C.green : C.grayDim,
+              boxShadow: fieldActive ? `0 0 8px ${C.green}40` : "none",
+              transition: "all 0.5s ease",
             }}
           />
-        </div>
-        <div className="flex items-center gap-3">
-          {flow.forcedMobility && flow.forcedMobility.activeCount > 0 && (
-            <span
-              className="uppercase tracking-[0.1em]"
-              style={{
-                ...mono,
-                fontSize: "0.3rem",
-                color: flow.forcedMobility.hasCompound ? C.green : C.amber,
-                padding: "1px 4px",
-                border: `1px solid ${flow.forcedMobility.hasCompound ? `${C.green}30` : `${C.amber}30`}`,
-                borderRadius: 2,
-              }}
-            >
-              {flow.forcedMobility.activeCount} VAGUE{flow.forcedMobility.activeCount > 1 ? "S" : ""}
-            </span>
-          )}
-          {CONFIG.USE_API && (
-            <span
-              className="uppercase tracking-[0.1em]"
-              style={{
-                ...mono,
-                fontSize: "0.3rem",
-                color: apiResult.error ? C.red : apiResult.source === "live" ? C.green : C.textGhost,
-                padding: "1px 4px",
-                border: `1px solid ${apiResult.error ? `${C.red}30` : apiResult.source === "live" ? `${C.green}30` : C.border}`,
-                borderRadius: 2,
-              }}
-            >
-              {apiResult.loading ? "API..." : apiResult.error ? "API ERR" : apiResult.source === "live" ? "API LIVE" : "API"}
-            </span>
-          )}
-          {!CONFIG.USE_API && sncfSource !== "unavailable" && (
-            <span
-              className="uppercase tracking-[0.1em]"
-              style={{
-                ...mono,
-                fontSize: "0.3rem",
-                color: sncfSource === "api" ? C.green : C.textGhost,
-                padding: "1px 4px",
-                border: `1px solid ${sncfSource === "api" ? `${C.green}30` : C.border}`,
-                borderRadius: 2,
-              }}
-            >
-              {sncfSource === "api" ? "SNCF LIVE" : "SNCF"}
-            </span>
-          )}
-          <span style={{ ...mono, fontSize: "0.5rem", color: C.textDim }}>
-            {new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+          <span
+            className="uppercase tracking-[0.2em]"
+            style={{
+              ...label,
+              fontSize: "clamp(0.6rem, 1.5vw, 0.75rem)",
+              fontWeight: 500,
+              color: fieldActive ? C.text : C.textDim,
+            }}
+          >
+            CHAMP {fieldActive ? "CONFIRME" : "EN LECTURE"}
+          </span>
+          <span
+            style={{
+              ...label,
+              fontSize: "clamp(0.55rem, 1.3vw, 0.7rem)",
+              color: C.textDim,
+              letterSpacing: "0.08em",
+            }}
+          >
+            {getCertaintyTone(flowState.confidence ?? 0)}
           </span>
         </div>
-      </div>
-
-      {/* ── Screen content ── */}
-      <div className="flex-1 min-h-0 overflow-hidden relative">
-        {/* Data status overlay for loading/error/stale states */}
-        <DataStatusOverlay status={dataStatus} />
-        <AnimatePresence mode="wait">
-          {screen === "live" && (
-            <motion.div
-              key="live"
-              initial={{ opacity: 0, x: -12 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 12 }}
-              transition={{ duration: 0.12 }}
-              className="h-full"
+        <div className="flex items-center gap-4">
+          {isOffline ? (
+            <span
+              className="uppercase tracking-[0.1em]"
+              style={{
+                ...label,
+                fontSize: "0.5rem",
+                color: C.textGhost,
+                letterSpacing: "0.08em",
+              }}
             >
-              <LiveFeed signals={signals} flow={flow} trainWaves={CONFIG.USE_API ? apiTrainWaves : trainWaves} onOpenRadar={() => setScreen("radar")} />
-            </motion.div>
-          )}
-
-          {screen === "radar" && (
-            <motion.div
-              key="radar"
-              initial={{ opacity: 0, x: -12 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 12 }}
-              transition={{ duration: 0.12 }}
-              className="h-full"
+              Sans connexion — mode système
+            </span>
+          ) : demoMode ? (
+            <span
+              className="uppercase tracking-[0.12em]"
+              style={{
+                ...label,
+                fontSize: "0.5rem",
+                color: C.textGhost,
+                letterSpacing: "0.1em",
+              }}
             >
-              <RadarPage signals={signals} breathPhase={breathPhase} />
-            </motion.div>
-          )}
-
-          {screen === "carte" && (
-            <motion.div
-              key="carte"
-              initial={{ opacity: 0, x: -12 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 12 }}
-              transition={{ duration: 0.12 }}
-              className="h-full"
+              MODE APERÇU
+            </span>
+          ) : (
+            <span
+              className="flex items-center gap-1.5"
+              style={{
+                ...label,
+                fontSize: "0.55rem",
+                color: C.textDim,
+                letterSpacing: "0.08em",
+              }}
+              title={dataSource === "live" ? "Données temps réel" : dataSource === "live_stale" ? "Dernière donnée reçue, reconnexion…" : "Mode démo local"}
             >
-              <CartePage
-                flow={flow}
-                signals={signals}
-                banlieueHubs={banlieueHubs}
-                breathPhase={breathPhase}
-                driverPosition={driverPos}
-                driverCorridor={anchorRef.current.corridor}
+              <span
+                style={{
+                  width: 4,
+                  height: 4,
+                  borderRadius: "50%",
+                  backgroundColor:
+                    dataSource === "live" ? C.green
+                    : dataSource === "live_stale" ? C.amber
+                    : C.grayDim,
+                  flexShrink: 0,
+                }}
               />
-            </motion.div>
+              {dataSource === "live" ? "LIVE" : dataSource === "live_stale" ? "LIVE (stale)" : "SIMULATED"}
+            </span>
           )}
+          <span
+            style={{
+              ...mono,
+              fontSize: "clamp(1rem, 2.5vw, 1.4rem)",
+              color: C.textMid,
+              letterSpacing: "0.05em",
+            }}
+          >
+            {formatTime(currentTime)}
+          </span>
+          <button
+            onClick={() => setShowDispatch(true)}
+            className="uppercase tracking-[0.15em]"
+            style={{
+              ...label,
+              fontSize: "0.55rem",
+              color: C.textDim,
+              backgroundColor: "transparent",
+              border: `1px solid ${C.border}`,
+              borderRadius: 3,
+              padding: "4px 10px",
+              cursor: "pointer",
+              transition: "border-color 0.2s ease",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.grayDim)}
+            onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.border)}
+          >
+            DISPATCH
+          </button>
+          <button
+            onClick={() => navigate("/replay")}
+            className="uppercase tracking-[0.15em]"
+            style={{
+              ...label,
+              fontSize: "0.55rem",
+              color: C.textDim,
+              backgroundColor: "transparent",
+              border: `1px solid ${C.border}`,
+              borderRadius: 3,
+              padding: "4px 10px",
+              cursor: "pointer",
+              transition: "border-color 0.2s ease",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.grayDim)}
+            onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.border)}
+          >
+            FIN SHIFT
+          </button>
+        </div>
+      </motion.div>
 
-          {screen === "semaine" && (
-            <motion.div
-              key="semaine"
-              initial={{ opacity: 0, x: -12 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 12 }}
-              transition={{ duration: 0.12 }}
-              className="h-full"
+      {/* ── Shift arc + Tonight Anchor ── */}
+      <motion.div
+        className="shrink-0 px-4 sm:px-6 lg:px-8 py-2"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: entered ? 1 : 0 }}
+        transition={{ duration: 0.4, delay: 0.05 }}
+      >
+        <ShiftArc phase={flowState.shiftPhase ?? "calme"} progress={flowState.shiftProgress ?? 0} />
+        <AnimatePresence>
+          {tonightAnchor && (
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35 }}
+              className="mt-1.5 truncate"
+              style={{
+                ...label,
+                fontSize: "0.6rem",
+                color: C.textDim,
+                letterSpacing: "0.06em",
+              }}
             >
-              <SemainePage signals={weekSignals} />
-            </motion.div>
+              {tonightAnchor}
+            </motion.p>
           )}
         </AnimatePresence>
-      </div>
+      </motion.div>
 
-      {/* ── Bottom Navigation ── */}
-      <div
-        className="shrink-0 flex items-center"
-        style={{
-          borderTop: `1px solid ${C.border}`,
-          backgroundColor: C.bg,
-        }}
-      >
-        {/* Screen tabs */}
-        {SCREENS.map((s) => {
-          const isActive = screen === s.id;
-          const activeColor = s.id === "live" ? C.green : s.id === "radar" ? C.blue : s.id === "carte" ? C.text : C.amber;
-          return (
-            <button
-              key={s.id}
-              onClick={() => setScreen(s.id)}
-              className="flex-1 py-3.5 flex flex-col items-center gap-1 relative"
-              style={{
-                backgroundColor: "transparent",
-                border: "none",
-                cursor: "pointer",
-                minHeight: 44, // mobile tap target
-              }}
-            >
-              {/* Active indicator */}
-              {isActive && (
-                <motion.div
-                  layoutId="nav-dot"
-                  className="absolute top-0 left-1/4 right-1/4"
-                  style={{ height: 2, backgroundColor: activeColor, borderRadius: 1 }}
-                  transition={{ duration: 0.2 }}
-                />
-              )}
-              <span
-                className="uppercase tracking-[0.2em]"
-                style={{
-                  ...label,
-                  fontSize: "0.55rem",
-                  fontWeight: isActive ? 500 : 400,
-                  color: isActive ? activeColor : C.textDim,
-                  transition: "color 0.2s",
-                }}
-              >
-                {s.label}
-              </span>
-            </button>
-          );
-        })}
-
-        {/* Menu button */}
-        <button
-          onClick={() => setShowMenu(!showMenu)}
-          className="px-4 py-3 flex flex-col items-center gap-1"
-          style={{
-            backgroundColor: "transparent",
-            border: "none",
-            borderLeft: `1px solid ${C.border}`,
-            cursor: "pointer",
-          }}
+      {/* ── Main ── */}
+      <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
+        {/* Map */}
+        <motion.div
+          className="h-[38vh] sm:h-[42vh] lg:h-full lg:flex-[1.1] shrink-0 lg:shrink"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: entered ? 1 : 0 }}
+          transition={{ duration: 0.6, delay: 0.1 }}
         >
-          <div className="flex flex-col gap-1">
-            <div style={{ width: 14, height: 1.5, backgroundColor: C.textDim, borderRadius: 1 }} />
-            <div style={{ width: 10, height: 1.5, backgroundColor: C.textDim, borderRadius: 1 }} />
-          </div>
-        </button>
-      </div>
+          <FlowMap
+            zoneHeat={flowState.zoneHeat ?? {}}
+            zoneStates={zoneStateApiToDisplay(flowState.zoneState)}
+            zoneSaturation={flowState.zoneSaturation ?? {}}
+            favoredZoneIds={flowState.favoredZoneIds ?? []}
+            breathPhase={breathPhase}
+            windowState={flowState.windowState ?? "stable"}
+            banlieueHubs={flowState.banlieueHubs}
+          />
+        </motion.div>
 
-      {/* ── Secondary Menu (slide up) ── */}
-      <AnimatePresence>
-        {showMenu && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-end justify-center"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            {/* Backdrop */}
-            <motion.div
-              className="absolute inset-0"
-              style={{ backgroundColor: "rgba(0,0,0,0.7)" }}
-              onClick={() => setShowMenu(false)}
-            />
+        {/* Panel */}
+        <motion.div
+          className="flex-1 flex flex-col min-h-0 lg:max-w-[480px] lg:border-l overflow-hidden"
+          style={{ borderColor: C.border }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: entered ? 1 : 0 }}
+          transition={{ duration: 0.5, delay: 0.15 }}
+        >
+          {/* Tab content */}
+          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-5">
+            <AnimatePresence mode="wait">
+              {/* ── MAINTENANT ── */}
+              {activeTab === "maintenant" && (
+                <motion.div
+                  key="maintenant"
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 8 }}
+                  transition={{ duration: 0.25 }}
+                  className="flex flex-col gap-5"
+                >
+                  {/* Window state */}
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        backgroundColor: windowColor,
+                        boxShadow: fieldActive ? `0 0 10px ${windowColor}50` : "none",
+                      }}
+                    />
+                    <span
+                      className="uppercase tracking-[0.2em]"
+                      style={{
+                        ...label,
+                        fontSize: "clamp(0.55rem, 1.3vw, 0.7rem)",
+                        color: windowColor,
+                      }}
+                    >
+                      {flowState.windowLabel}
+                    </span>
+                  </div>
 
-            {/* Menu panel */}
-            <motion.div
-              className="relative w-full max-w-[400px] mx-auto"
-              initial={{ y: 100 }}
-              animate={{ y: 0 }}
-              exit={{ y: 100 }}
-              transition={{ duration: 0.25, ease: "easeOut" }}
-              style={{
-                backgroundColor: C.surface,
-                borderTop: `1px solid ${C.border}`,
-                borderRadius: "8px 8px 0 0",
-              }}
-            >
-              {/* Handle */}
-              <div className="flex justify-center pt-2 pb-3">
-                <div style={{ width: 32, height: 3, backgroundColor: C.textGhost, borderRadius: 2 }} />
-              </div>
+                  {/* Countdown */}
+                  <span
+                    style={{
+                      ...mono,
+                      fontSize: "clamp(2.8rem, 9vw, 4.5rem)",
+                      color: actionColor,
+                      lineHeight: 1,
+                      letterSpacing: "-0.02em",
+                    }}
+                  >
+                    {formatCountdown(flowState.windowCountdownSec ?? 0)}
+                  </span>
+                  {/* Countdown target label */}
+                  {flowState.countdownTargetLabel && (
+                    <span
+                      style={{
+                        ...label,
+                        fontSize: "0.7rem",
+                        color: C.textDim,
+                        letterSpacing: "0.05em",
+                        marginTop: 4,
+                      }}
+                    >
+                      {flowState.countdownTargetLabel}
+                    </span>
+                  )}
 
-              {/* Menu items */}
-              <div className="flex flex-col pb-6">
-                {[
-                  { label: "GLANCE MODE", action: () => { setShowMenu(false); setShowGlance(true); } },
-                  { label: "DISPATCH", action: () => { setShowMenu(false); setShowDispatch(true); } },
-                  { label: "PARAMETRES", action: () => { setShowMenu(false); } },
-                  { label: "FEEDBACK", action: () => { setShowMenu(false); } },
-                  { label: "FIN SHIFT", action: () => { setShowMenu(false); navigate("/replay"); } },
-                ].map((item) => (
-                  <motion.button
-                    key={item.label}
-                    onClick={item.action}
-                    className="w-full text-left px-6 py-3.5 uppercase tracking-[0.15em]"
+                  {/* Action word */}
+                  <h1
+                    style={{
+                      fontFamily: "'Cormorant Garamond', serif",
+                      fontSize: "clamp(2rem, 6vw, 3.5rem)",
+                      fontWeight: 300,
+                      lineHeight: 1,
+                      color: actionColor,
+                      margin: 0,
+                      letterSpacing: "-0.01em",
+                    }}
+                  >
+                    {flowState.actionLabel}
+                  </h1>
+
+                  {/* Target zone + earnings */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col gap-0.5">
+                      <span
+                        style={{
+                          ...label,
+                          fontSize: "clamp(0.95rem, 2.5vw, 1.2rem)",
+                          color: C.text,
+                        }}
+                      >
+                        {flowState.targetZone}
+                        <span style={{ color: C.textDim, marginLeft: 6 }}>
+                          {flowState.targetZoneArr}
+                        </span>
+                      </span>
+                      <span
+                        style={{ ...label, fontSize: "clamp(0.7rem, 1.8vw, 0.85rem)", fontWeight: 300, color: C.textDim }}
+                      >
+                        {flowState.fieldMessage}
+                      </span>
+                    </div>
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span
+                        style={{
+                          ...mono,
+                          fontSize: "clamp(1rem, 2.5vw, 1.3rem)",
+                          fontWeight: 500,
+                          color:
+                            (flowState.earningsIntensity ?? "MODERE") === "FORT"
+                              ? C.green
+                              : (flowState.earningsIntensity ?? "MODERE") === "MODERE"
+                                ? C.amber
+                                : C.textDim,
+                        }}
+                      >
+                        {flowState.earningsIntensity ?? "MODERE"}
+                      </span>
+                      <span style={{ ...label, fontSize: "0.6rem", fontWeight: 300, color: C.textDim }}>
+                        Intensite
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Navigate */}
+                  <button
+                    className="w-full py-3 px-4 flex items-center justify-center gap-2 uppercase tracking-[0.2em]"
                     style={{
                       ...label,
-                      fontSize: "0.6rem",
-                      fontWeight: 400,
-                      color: item.label === "FIN SHIFT" ? C.textDim : C.text,
-                      backgroundColor: "transparent",
-                      border: "none",
-                      borderBottom: `1px solid ${C.border}`,
+                      fontSize: "clamp(0.7rem, 1.6vw, 0.85rem)",
+                      fontWeight: 500,
+                      color: flowState.action === "move" ? C.bg : C.textDim,
+                      backgroundColor: flowState.action === "move" ? C.green : C.surface,
+                      border: `1px solid ${flowState.action === "move" ? C.green : C.border}`,
+                      borderRadius: 3,
                       cursor: "pointer",
+                      transition: "all 0.3s ease",
                     }}
-                    whileTap={{ backgroundColor: C.surfaceHover }}
                   >
-                    {item.label}
-                  </motion.button>
-                ))}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                    NAVIGUER
+                    <span style={{ fontSize: "0.9em" }}>&#8594;</span>
+                  </button>
 
-      {/* ── Dispatch Modal (simplified: just corridors) ── */}
-      <DispatchModal
-        session={{
-          duration_min: Math.round((Date.now() - sessionStartRef.current) / 60000),
-          courses_count: 0,
-          earnings: flow.sessionEarnings,
-          target_earnings: 0,
-          efficiency: 0,
-        }}
-        corridors={flow.corridors}
-        phase={flow.shiftPhase}
-        open={showDispatch}
-        onClose={() => setShowDispatch(false)}
-      />
+                  {/* Temporal message */}
+                  <p style={{ ...label, fontSize: "clamp(0.75rem, 1.8vw, 0.9rem)", fontWeight: 300, color: C.textDim, margin: 0 }}>
+                    {flowState.temporalMessage}
+                  </p>
 
-      {/* ── Glance Mode (full-screen overlay) ── */}
+                  {/* Alternatives */}
+                  {flowState.alternatives && flowState.alternatives.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span style={{ ...label, fontSize: "0.65rem", color: C.textDim }}>Alt:</span>
+                      {flowState.alternatives.map((alt) => (
+                        <span
+                          key={alt}
+                          className="px-2 py-0.5"
+                          style={{
+                            ...label,
+                            fontSize: "0.6rem",
+                            color: C.textMid,
+                            backgroundColor: C.surface,
+                            border: `1px solid ${C.border}`,
+                            borderRadius: 2,
+                          }}
+                        >
+                          {alt}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Context signals */}
+                  {flowState.signals && flowState.signals.length > 0 && (
+                    <div className="flex flex-col gap-1.5 pt-1" style={{ borderTop: `1px solid ${C.border}` }}>
+                      {flowState.signals.map((sig, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <div
+                            style={{
+                              width: 4,
+                              height: 4,
+                              borderRadius: "50%",
+                              backgroundColor:
+                                sig.type === "surge" ? C.green
+                                : sig.type === "event" ? C.amber
+                                : sig.type === "weather" ? C.textDim
+                                : C.grayDim,
+                            }}
+                          />
+                          <span style={{ ...label, fontSize: "clamp(0.6rem, 1.4vw, 0.75rem)", fontWeight: 300, color: C.textDim }}>
+                            {sig.text}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </motion.div>
+              )}
+
+              {/* ── PROCHAIN ── */}
+              {activeTab === "prochain" && (
+                <motion.div
+                  key="prochain"
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 8 }}
+                  transition={{ duration: 0.25 }}
+                  className="flex flex-col gap-5"
+                >
+                  <span className="uppercase tracking-[0.15em]" style={{ ...label, fontSize: "0.65rem", color: C.textDim }}>
+                    TRANSITIONS A VENIR
+                  </span>
+
+                  <div
+                    className="px-4 py-3"
+                    style={{ backgroundColor: C.surface, border: `1px solid ${C.border}`, borderRadius: 3 }}
+                  >
+                    <span style={{ ...label, fontSize: "clamp(0.8rem, 2vw, 1rem)", color: C.amber }}>
+                      {flowState.temporalMessage}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-3 px-3 py-2" style={{ borderBottom: `1px solid ${C.border}` }}>
+                      <span className="w-14" style={{ ...mono, color: C.textDim, fontSize: "0.55rem" }}>HEURE</span>
+                      <span className="flex-1" style={{ ...label, color: C.textDim, fontSize: "0.55rem" }}>ZONE</span>
+                      <span className="w-20" style={{ ...label, color: C.textDim, fontSize: "0.55rem" }}>SAT.</span>
+                      <span className="w-16 text-right" style={{ ...mono, color: C.textDim, fontSize: "0.55rem" }}>INT.</span>
+                    </div>
+                    {(flowState.upcoming ?? []).map((slot, i) => {
+                      const slotIntensity = slot.earnings >= 30 ? "FORT" : slot.earnings >= 20 ? "MODERE" : "FAIBLE";
+                      return (
+                        <div
+                          key={i}
+                          className="flex items-center gap-3 px-3 py-2.5"
+                          style={{ borderBottom: `1px solid ${C.border}` }}
+                        >
+                          <span className="w-14" style={{ ...mono, color: C.textMid }}>{slot.time}</span>
+                          <span className="flex-1" style={{ ...label, color: C.text }}>{slot.zone}</span>
+                          <span className="w-20"><SatBar value={slot.saturation} /></span>
+                          <span
+                            className="w-16 text-right"
+                            style={{
+                              ...mono,
+                              fontSize: "0.7rem",
+                              color: slotIntensity === "FORT" ? C.green : slotIntensity === "MODERE" ? C.amber : C.textDim,
+                            }}
+                          >
+                            {slotIntensity}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* ── CE SOIR ── */}
+              {activeTab === "cesoir" && (
+                <motion.div
+                  key="cesoir"
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 8 }}
+                  transition={{ duration: 0.25 }}
+                  className="flex flex-col gap-5"
+                >
+                  <span className="uppercase tracking-[0.15em]" style={{ ...label, fontSize: "0.65rem", color: C.textDim }}>
+                    PICS ATTENDUS
+                  </span>
+
+                  {(flowState.peaks ?? []).map((peak, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between px-4 py-3"
+                      style={{ backgroundColor: C.surface, border: `1px solid ${C.border}`, borderRadius: 3 }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span style={{ ...mono, color: C.textMid, fontSize: "0.85rem" }}>{peak.time}</span>
+                        <div className="flex flex-col">
+                          <span style={{ ...label, color: C.text, fontSize: "0.9rem" }}>{peak.zone}</span>
+                          <span style={{ ...label, color: C.textDim, fontSize: "0.65rem" }}>{peak.reason}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div style={{ width: 32, height: 4, borderRadius: 2, backgroundColor: C.textGhost, overflow: "hidden" }}>
+                          <div style={{ width: `${peak.score}%`, height: "100%", backgroundColor: peak.score > 75 ? C.green : C.amber, borderRadius: 2 }} />
+                        </div>
+                        <span style={{ ...mono, color: C.textDim, fontSize: "0.6rem" }}>{peak.score}</span>
+                      </div>
+                    </div>
+                  ))}
+
+                  <div className="pt-3" style={{ borderTop: `1px solid ${C.border}` }}>
+                    <span className="uppercase tracking-[0.15em]" style={{ ...label, color: C.textDim, fontSize: "0.6rem" }}>
+                      SIGNAUX
+                    </span>
+                    <div className="flex flex-col gap-2 mt-3">
+                      {(flowState.signals ?? []).map((sig, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <div
+                            style={{
+                              width: 4, height: 4, borderRadius: "50%",
+                              backgroundColor: sig.type === "surge" ? C.green : sig.type === "event" ? C.amber : C.textDim,
+                            }}
+                          />
+                          <span style={{ ...label, color: C.textMid, fontSize: "0.75rem" }}>{sig.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* ── COMPLET ── */}
+              {activeTab === "complet" && (
+                <motion.div
+                  key="complet"
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 8 }}
+                  transition={{ duration: 0.25 }}
+                  className="flex flex-col gap-5"
+                >
+                  <span className="uppercase tracking-[0.15em]" style={{ ...label, color: C.textDim, fontSize: "0.65rem" }}>
+                    SESSION
+                  </span>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <StatCard cardLabel="Shift en cours" value={formatDuration(Date.now() - sessionStartRef.current)} />
+                    <StatCard cardLabel="Estimation" value={`~${flowState.sessionEarnings ?? 0} EUR`} highlight />
+                    <StatCard cardLabel="Confiance" value={`${flowState.confidence ?? 0}%`} />
+                    <StatCard cardLabel="Phase" value={(flowState.shiftPhase ?? "calme").toUpperCase()} />
+                  </div>
+
+                  <div className="pt-3" style={{ borderTop: `1px solid ${C.border}` }}>
+                    <span className="uppercase tracking-[0.15em]" style={{ ...label, color: C.textDim, fontSize: "0.6rem" }}>
+                      DERNIERES FENETRES
+                    </span>
+                    <div className="flex flex-col mt-3">
+                      {(flowState.memory ?? []).map((mem, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center gap-3 px-3 py-2.5"
+                          style={{ borderBottom: `1px solid ${C.border}` }}
+                        >
+                          <span style={{ ...mono, color: C.textDim }}>{mem.time}</span>
+                          <span className="flex-1" style={{ ...label, color: C.text }}>{mem.zone}</span>
+                          <div
+                            className="px-2 py-0.5"
+                            style={{
+                              ...label,
+                              fontSize: "0.55rem",
+                              color: mem.captured ? C.green : C.textDim,
+                              backgroundColor: mem.captured ? `${C.green}15` : C.surface,
+                              border: `1px solid ${mem.captured ? C.greenDim : C.border}`,
+                              borderRadius: 2,
+                            }}
+                          >
+                            {mem.captured ? "capturee" : "manquee"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* ── Tab navigation ── */}
+          <div className="shrink-0 flex items-center" style={{ borderTop: `1px solid ${C.border}` }}>
+            {tabs.map((tab) => {
+              const isTabActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className="flex-1 py-3 sm:py-3.5 uppercase tracking-[0.12em] text-center"
+                  style={{
+                    ...label,
+                    fontSize: "clamp(0.55rem, 1.2vw, 0.7rem)",
+                    fontWeight: isTabActive ? 500 : 400,
+                    color: isTabActive ? C.text : C.textDim,
+                    backgroundColor: isTabActive ? C.surface : "transparent",
+                    border: "none",
+                    borderTop: `2px solid ${isTabActive ? C.green : "transparent"}`,
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                  }}
+                >
+                  <span className="hidden sm:inline">{tab.full}</span>
+                  <span className="sm:hidden">{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </motion.div>
+      </div>
+
+      {/* Dispatch Panel */}
       <AnimatePresence>
-        {showGlance && (
-          <GlanceMode
-            signal={signals.length > 0 ? signals[0] : null}
-            onExit={() => setShowGlance(false)}
+        {showDispatch && (
+          <DispatchPanel
+            flowState={flowState}
+            sessionStartTime={sessionStartRef.current}
+            onClose={() => setShowDispatch(false)}
           />
         )}
       </AnimatePresence>
 
-      {/* Debug comparison panel (dev-only) */}
-      <DebugComparisonPanel
-        localSignals={localSignals}
-        apiSignals={apiResult.signals}
-        apiLoading={apiResult.loading}
-        apiError={apiResult.error}
-      />
+      {/* Demo activation overlay */}
+      {showActivationOverlay && (
+        <motion.div
+          className="absolute inset-0 flex flex-col items-center justify-center z-50 px-6"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5 }}
+          style={{
+            backgroundColor: "rgba(0,0,0,0.6)",
+            backdropFilter: "blur(6px)",
+          }}
+        >
+          <div className="flex flex-col items-center text-center max-w-sm gap-6">
+            <p
+              className="text-lg"
+              style={{ ...label, color: C.text, fontWeight: 400, lineHeight: 1.4 }}
+            >
+              Le champ reste actif pendant ta session.
+            </p>
+            <p
+              style={{ ...label, color: C.textDim, fontSize: "0.9rem" }}
+            >
+              Active ton accès pour continuer.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3 w-full justify-center">
+              <button
+                type="button"
+                onClick={() => navigate("/activate")}
+                className="uppercase tracking-[0.2em] py-3 px-6 font-medium transition-opacity hover:opacity-90"
+                style={{
+                  ...label,
+                  fontSize: "0.75rem",
+                  color: C.bg,
+                  backgroundColor: C.green,
+                  border: "none",
+                  borderRadius: 3,
+                  cursor: "pointer",
+                }}
+              >
+                Activer Flow
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowActivationOverlay(false)}
+                className="uppercase tracking-[0.15em] py-2.5 px-4 font-medium transition-opacity hover:opacity-80"
+                style={{
+                  ...label,
+                  fontSize: "0.7rem",
+                  color: C.textDim,
+                  backgroundColor: "transparent",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 3,
+                  cursor: "pointer",
+                }}
+              >
+                Mode aperçu
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 }
