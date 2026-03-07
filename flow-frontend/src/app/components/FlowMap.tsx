@@ -14,6 +14,15 @@ import {
 } from "./parisData";
 import type { ZoneState, BanlieueHubState } from "./FlowEngine";
 
+// Signal pin type (subset of Signal for map display)
+interface SignalPin {
+  id: string;
+  zone: string;
+  arrondissement?: string;
+  intensity: number;
+  kind: "live" | "nearby" | "alert" | "soon" | "compound";
+}
+
 interface FlowMapProps {
   zoneHeat: Record<string, number>;
   zoneStates: Record<string, ZoneState>;
@@ -27,6 +36,7 @@ interface FlowMapProps {
   driverPosition?: { lat: number; lng: number } | null;
   driverCorridor?: string;
   banlieueHubs?: Record<string, BanlieueHubState>;
+  signalPins?: SignalPin[];
 }
 
 // ── Color grammar ──
@@ -119,6 +129,26 @@ function getZoneCorridor(zoneId: string): string {
   return corridorMap[zoneId] ?? "—";
 }
 
+// ── Signal pin positioning ──
+function getSignalPinPosition(pin: SignalPin): [number, number] | null {
+  // Extract arrondissement number
+  const arr = pin.arrondissement?.replace(/\D/g, "") || "";
+  const territory = TERRITORIES.find((t) => t.id === arr);
+  if (territory) {
+    // Offset slightly from center to avoid overlap
+    const offset = (parseInt(pin.id, 36) % 10) * 3 - 15;
+    return [territory.center[0] + offset, territory.center[1] + offset];
+  }
+  return null;
+}
+
+function getSignalPinColor(pin: SignalPin): string {
+  if (pin.kind === "alert") return C.amber;
+  if (pin.intensity >= 3) return C.greenGlow;
+  if (pin.intensity >= 2) return C.green;
+  return C.greenDim;
+}
+
 function getZoneStateLabel(state: ZoneState): string {
   switch (state) {
     case "peak": return "pic";
@@ -144,6 +174,7 @@ export function FlowMap({
   driverPosition,
   driverCorridor,
   banlieueHubs,
+  signalPins = [],
 }: FlowMapProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [tappedId, setTappedId] = useState<string | null>(null);
@@ -294,6 +325,47 @@ export function FlowMap({
                   r={2.5} fill={C.red} opacity={0.6 + breathPhase * 0.2}
                 />
               )}
+            </g>
+          );
+        })}
+
+        {/* Signal pins - sparse, top 3 only */}
+        {signalPins.slice(0, 3).map((pin, i) => {
+          const pos = getSignalPinPosition(pin);
+          if (!pos) return null;
+          const [px, py] = pos;
+          const color = getSignalPinColor(pin);
+          const size = pin.intensity >= 3 ? 7 : 5;
+          const isTop = i === 0;
+
+          return (
+            <g key={pin.id}>
+              {/* Pulse ring for top signal */}
+              {isTop && (
+                <circle
+                  cx={px} cy={py}
+                  r={size + 4 + breathPhase * 3}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={0.8}
+                  opacity={0.3 + breathPhase * 0.2}
+                />
+              )}
+              {/* Pin dot */}
+              <circle
+                cx={px} cy={py}
+                r={size}
+                fill={color}
+                opacity={0.9}
+                filter={pin.intensity >= 3 ? "url(#fglow)" : undefined}
+              />
+              {/* Inner highlight */}
+              <circle
+                cx={px} cy={py}
+                r={size * 0.4}
+                fill="#ffffff"
+                opacity={0.5}
+              />
             </g>
           );
         })}

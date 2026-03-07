@@ -21,6 +21,7 @@ import { buildFlowCard } from '@/lib/flow-engine/card-emitter'
 import type { TonightPack } from '@/lib/signal-fetchers/types'
 import { tonightPackToCitySignalsPack, isTonightPack } from '@/lib/city-signals/tonightPackAdapter'
 import type { FlowState, Ramification, DriverPosition } from '@/types/flow-state'
+import { buildSignalFeed, buildWeekCalendar } from '@/lib/flow-engine/signal-builder'
 import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
 import type { CompiledBrief } from '@/lib/prompts/contracts'
 import type { FlowCard } from '@/types/flow-card'
@@ -367,6 +368,16 @@ export async function GET(request: Request) {
 
     // Compute banlieue hub states from pack and ramifications
     flowState.banlieueHubs = computeBanlieueHubs(pack, ramifications)
+
+    // Build unified signal feed (v2.0 signal model for LIVE screen)
+    flowState.signalFeed = buildSignalFeed({
+      flowState,
+      driverPosition,
+      // Zone coordinates will be populated from pack or defaults
+    })
+
+    // Build week calendar (for SEMAINE screen)
+    flowState.weekCalendar = buildWeekCalendar(weeklySkeleton, flowState.peaks)
 
     response.depth = flowState
   }

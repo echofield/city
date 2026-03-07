@@ -34,6 +34,9 @@ export interface BanlieueHubState {
   corridor: "nord" | "est" | "sud" | "ouest";
 }
 
+// Import signal types
+import type { SignalFeed, WeekCalendar } from "./signal";
+
 export interface FlowState {
   windowState: WindowState;
   windowLabel: string;
@@ -71,6 +74,10 @@ export interface FlowState {
   generatedAt?: string;
   /** Banlieue hub states (CDG, Orly, La Defense, etc.) */
   banlieueHubs?: Record<string, BanlieueHubState>;
+  /** Unified signal feed for LIVE screen (v2.0) */
+  signalFeed?: SignalFeed;
+  /** Week calendar for SEMAINE screen */
+  weekCalendar?: WeekCalendar;
 }
 
 /** Format seconds as MM:SS for display */

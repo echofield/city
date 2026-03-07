@@ -5,6 +5,8 @@
  * Frontend must consume it as-is. Do not change without frontend coordination.
  */
 
+import type { SignalFeed, WeekCalendar } from './signal'
+
 /** Driver GPS position for proximity calculations */
 export interface DriverPosition {
   lat: number
@@ -129,6 +131,12 @@ export interface FlowState {
 
   /** Banlieue hub states (CDG, Orly, La Defense, etc.) */
   banlieueHubs?: Record<string, BanlieueHubState>;
+
+  /** Unified signal feed for LIVE screen (v2.0 signal model) */
+  signalFeed?: SignalFeed;
+
+  /** Week calendar for SEMAINE screen */
+  weekCalendar?: WeekCalendar;
 }
 
 /** Confidence level as enum string (not numeric) */

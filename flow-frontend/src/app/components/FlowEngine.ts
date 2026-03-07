@@ -2,6 +2,9 @@
 // Action. Reaction. Information. Money.
 
 import { TERRITORIES } from "./parisData";
+import { generateRestaurantSignals, getRestaurantVenuesStatic } from "../lib/restaurant-signals";
+import { generateSpecialEventSignals, getSpecialEventsStatic } from "../lib/special-event-signals";
+import type { Signal } from "../types/signal";
 
 // ── Types ──
 
@@ -167,6 +170,26 @@ export function computeContextSignals(): ContextSignal[] {
   const metroStatus = computeMetroStatus();
   if (metroStatus) signals.push(metroStatus);
   return signals;
+}
+
+/**
+ * Generate daily restaurant exit signals.
+ * These are recurring signals that increase Flow's usefulness
+ * on normal nights (Monday-Sunday), not just event nights.
+ */
+export function computeRestaurantSignals(now: Date = new Date()): Signal[] {
+  const venues = getRestaurantVenuesStatic();
+  return generateRestaurantSignals(venues, now);
+}
+
+/**
+ * Generate special event signals for today.
+ * Mega-events, expos, banlieue festivals, chateau galas.
+ * These are date-specific structural demand anomalies.
+ */
+export function computeSpecialEventSignals(now: Date = new Date()): Signal[] {
+  const events = getSpecialEventsStatic();
+  return generateSpecialEventSignals(events, now);
 }
 
 // ── Helpers ──

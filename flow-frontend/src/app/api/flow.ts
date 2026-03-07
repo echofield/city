@@ -23,9 +23,22 @@ interface FlowApiResponse {
   meta: { source: string; stale: boolean; lastUpdate: string }
 }
 
-export async function fetchFlowState(sessionStart?: number): Promise<unknown> {
+export interface DriverPositionParam {
+  lat: number
+  lng: number
+}
+
+export async function fetchFlowState(
+  sessionStart?: number,
+  driverPosition?: DriverPositionParam | null
+): Promise<unknown> {
   const params = new URLSearchParams({ depth: '1' })
   if (sessionStart != null) params.set('sessionStart', String(sessionStart))
+  // Pass driver position for proximity computation (backend uses lat/lng)
+  if (driverPosition) {
+    params.set('lat', driverPosition.lat.toFixed(6))
+    params.set('lng', driverPosition.lng.toFixed(6))
+  }
   const path = `/api/flow/state?${params}`
   const res = await fetch(apiUrl(path), { cache: 'no-store' })
   if (!res.ok) throw new Error('Flow API error')

@@ -1,6 +1,6 @@
-// FLOW — Dispatch Panel
-// Session overview + corridor status + impacts + timeline
-// All data computed from FlowState (real, not mockup)
+// FLOW — Dispatch Panel (Simplified)
+// Macro corridor view: density, saturation, field state
+// No fake stats. Only real computed data.
 
 import { motion } from "motion/react";
 import type { FlowState, ShiftPhase, ContextSignal } from "./FlowEngine";
@@ -17,11 +17,11 @@ const CORRIDOR_DEFS = [
 
 // ── Helpers ──
 
-function getCorridorDensity(
+function getCorridorStatus(
   corridorZones: string[],
   zoneHeat: Record<string, number>,
   zoneSaturation: Record<string, number>
-): { status: "dense" | "fluide"; avgHeat: number; avgSat: number } {
+): { status: "sature" | "dense" | "fluide"; avgHeat: number; avgSat: number } {
   let totalHeat = 0;
   let totalSat = 0;
   let count = 0;
@@ -37,33 +37,27 @@ function getCorridorDensity(
   const avgHeat = count > 0 ? totalHeat / count : 0;
   const avgSat = count > 0 ? totalSat / count : 0;
 
-  // Dense if avg saturation > 40 OR avg heat > 0.5
-  const status = avgSat > 40 || avgHeat > 0.5 ? "dense" : "fluide";
-
-  return { status, avgHeat, avgSat };
+  // Three-tier status
+  if (avgSat > 60) return { status: "sature", avgHeat, avgSat };
+  if (avgSat > 35 || avgHeat > 0.4) return { status: "dense", avgHeat, avgSat };
+  return { status: "fluide", avgHeat, avgSat };
 }
 
 function getImpactForCorridor(
   corridorId: string,
   signals: ContextSignal[]
 ): string | null {
-  // Map signals to corridors based on keywords
   const corridorKeywords: Record<string, string[]> = {
-    nord: ["montmartre", "pigalle", "18", "19", "17", "nord"],
-    est: ["bastille", "marais", "11", "12", "20", "nation", "est"],
+    nord: ["montmartre", "pigalle", "18", "19", "17", "nord", "gare du nord"],
+    est: ["bastille", "marais", "11", "12", "20", "nation", "est", "bercy"],
     sud: ["latin", "13", "14", "sud", "montparnasse"],
-    ouest: ["trocadero", "16", "15", "defense", "ouest", "champs"],
+    ouest: ["trocadero", "16", "15", "defense", "ouest", "champs", "psg"],
   };
 
   const keywords = corridorKeywords[corridorId] ?? [];
-
   for (const sig of signals) {
     const textLower = sig.text.toLowerCase();
     if (keywords.some((kw) => textLower.includes(kw))) {
-      return sig.text;
-    }
-    // PSG matches ouest (Parc des Princes)
-    if (corridorId === "ouest" && textLower.includes("psg")) {
       return sig.text;
     }
   }
@@ -87,10 +81,20 @@ function getPhaseLabel(phase: ShiftPhase): string {
   }
 }
 
-function getTimelinePhaseLabel(index: number, total: number): string {
-  // Derive phase from position in timeline
-  const phases = ["PIC", "DISPERSION", "TRANSITION", "NUIT", "CALME"];
-  return phases[index % phases.length];
+function getStatusColor(status: "sature" | "dense" | "fluide"): string {
+  switch (status) {
+    case "sature": return C.red;
+    case "dense": return C.amber;
+    case "fluide": return C.textDim;
+  }
+}
+
+function getStatusLabel(status: "sature" | "dense" | "fluide"): string {
+  switch (status) {
+    case "sature": return "SATURE";
+    case "dense": return "DENSE";
+    case "fluide": return "FLUIDE";
+  }
 }
 
 // ── Component ──
@@ -115,58 +119,26 @@ export function DispatchPanel({
   const signals = flowState.signals ?? [];
 
   const corridorStatuses = CORRIDOR_DEFS.map((corridor) => {
-    const density = getCorridorDensity(
-      corridor.zones,
-      zoneHeat,
-      zoneSaturation
-    );
+    const status = getCorridorStatus(corridor.zones, zoneHeat, zoneSaturation);
     const impact = getImpactForCorridor(corridor.id, signals);
-    return {
-      ...corridor,
-      ...density,
-      impact,
-    };
+    return { ...corridor, ...status, impact };
   });
 
-  // Build active impacts from signals that affect corridors
+  // Active impacts: signals affecting dense/saturated corridors
   const activeImpacts = corridorStatuses
-    .filter((c) => c.impact && c.status === "dense")
-    .map((c) => ({
-      signal: c.impact!,
-      effect: `hausse ${c.id}`,
-    }));
+    .filter((c) => c.impact && c.status !== "fluide")
+    .map((c) => ({ corridor: c.label, signal: c.impact! }));
 
-  // Session stats (computed from flow state)
-  const sessionHours = sessionDurationMs / 3600000;
-  const earningsEstimate = flowState.earningsEstimate ?? [0, 0];
-  const avgEarnings = (earningsEstimate[0] + earningsEstimate[1]) / 2;
-  const estimatedCourses = Math.max(1, Math.floor(sessionHours * 2.5)); // ~2.5 courses/hour
-  const targetEarnings = 120; // EUR target
-  const efficiency = Math.min(99, Math.round(50 + (flowState.confidence ?? 0) * 0.4 + (flowState.shiftProgress ?? 0) * 20));
-
-  // Build +2H timeline from upcoming and peaks
-  const upcoming = flowState.upcoming ?? [];
-  const peaks = flowState.peaks ?? [];
-  const timelineSlots = [
-    ...upcoming.slice(0, 4).map((slot, i) => ({
-      time: slot.time,
-      phase: getTimelinePhaseLabel(i, upcoming.length),
-      zone: slot.zone,
-      phaseColor: i === 0 ? C.green : C.amber,
-    })),
-  ];
-
-  // Add peaks if we have room
-  if (timelineSlots.length < 4) {
-    peaks.slice(0, 4 - timelineSlots.length).forEach((peak) => {
-      timelineSlots.push({
-        time: peak.time,
-        phase: "PIC",
-        zone: peak.zone,
-        phaseColor: C.green,
-      });
-    });
-  }
+  // Field state summary
+  const saturatedCount = corridorStatuses.filter((c) => c.status === "sature").length;
+  const denseCount = corridorStatuses.filter((c) => c.status === "dense").length;
+  const fieldState = saturatedCount > 0
+    ? "SATURE"
+    : denseCount >= 2
+      ? "DENSE"
+      : denseCount === 1
+        ? "MIXTE"
+        : "FLUIDE";
 
   return (
     <motion.div
@@ -179,7 +151,7 @@ export function DispatchPanel({
       onClick={onClose}
     >
       <motion.div
-        className="w-full max-w-md max-h-[90vh] overflow-y-auto"
+        className="w-full max-w-sm"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: 10 }}
@@ -198,10 +170,10 @@ export function DispatchPanel({
         >
           <div className="flex items-center gap-3">
             <span
-              className="uppercase tracking-[0.25em]"
+              className="uppercase tracking-[0.2em]"
               style={{
                 ...label,
-                fontSize: "0.85rem",
+                fontSize: "0.8rem",
                 fontWeight: 500,
                 color: C.text,
               }}
@@ -209,17 +181,15 @@ export function DispatchPanel({
               DISPATCH
             </span>
             <span
-              className="px-2 py-0.5 uppercase tracking-[0.15em]"
+              className="px-2 py-0.5 uppercase tracking-[0.12em]"
               style={{
                 ...label,
-                fontSize: "0.55rem",
+                fontSize: "0.5rem",
                 fontWeight: 500,
-                color: (flowState.shiftPhase ?? "calme") === "pic" ? C.green : C.amber,
+                color: (flowState.shiftPhase ?? "calme") === "pic" ? C.green : C.textMid,
                 backgroundColor:
-                  (flowState.shiftPhase ?? "calme") === "pic" ? `${C.green}15` : `${C.amber}15`,
-                border: `1px solid ${
-                  (flowState.shiftPhase ?? "calme") === "pic" ? C.greenDim : C.amberDim
-                }`,
+                  (flowState.shiftPhase ?? "calme") === "pic" ? `${C.green}15` : `${C.surface}`,
+                border: `1px solid ${C.border}`,
                 borderRadius: 2,
               }}
             >
@@ -228,10 +198,10 @@ export function DispatchPanel({
           </div>
           <button
             onClick={onClose}
-            className="uppercase tracking-[0.15em] px-3 py-1.5"
+            className="px-2 py-1"
             style={{
               ...label,
-              fontSize: "0.6rem",
+              fontSize: "0.55rem",
               color: C.textDim,
               backgroundColor: "transparent",
               border: `1px solid ${C.border}`,
@@ -239,77 +209,71 @@ export function DispatchPanel({
               cursor: "pointer",
             }}
           >
-            FERMER
+            ×
           </button>
         </div>
 
-        {/* Session */}
-        <div className="px-5 py-4" style={{ borderBottom: `1px solid ${C.border}` }}>
-          <span
-            className="uppercase tracking-[0.15em]"
-            style={{ ...label, fontSize: "0.55rem", color: C.textDim }}
-          >
-            SESSION
-          </span>
-          <div className="flex items-end justify-between mt-2">
+        {/* Session + Field State */}
+        <div
+          className="flex items-center justify-between px-5 py-3"
+          style={{ borderBottom: `1px solid ${C.border}` }}
+        >
+          <div className="flex items-center gap-2">
             <span
-              style={{
-                ...mono,
-                fontSize: "2rem",
-                fontWeight: 500,
-                color: C.text,
-                lineHeight: 1,
-              }}
+              style={{ ...mono, fontSize: "1.2rem", fontWeight: 500, color: C.text }}
             >
               {sessionDuration}
             </span>
-            <div className="flex flex-col items-end">
-              <span style={{ ...mono, fontSize: "1rem", color: C.textMid }}>
-                {estimatedCourses}
-              </span>
-              <span style={{ ...label, fontSize: "0.6rem", color: C.textDim }}>
-                / {targetEarnings} EUR
-              </span>
-            </div>
+            <span
+              className="uppercase tracking-[0.1em]"
+              style={{ ...label, fontSize: "0.55rem", color: C.textDim }}
+            >
+              SESSION
+            </span>
           </div>
-          <div
-            className="mt-3 h-1 rounded-full overflow-hidden"
-            style={{ backgroundColor: C.textGhost }}
-          >
+          <div className="flex items-center gap-2">
             <div
-              className="h-full rounded-full"
               style={{
-                width: `${Math.min(100, ((flowState.sessionEarnings ?? 0) / targetEarnings) * 100)}%`,
-                backgroundColor: C.green,
-                transition: "width 0.5s ease",
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                backgroundColor:
+                  fieldState === "SATURE" ? C.red :
+                  fieldState === "DENSE" ? C.amber :
+                  fieldState === "MIXTE" ? C.amber : C.textDim,
               }}
             />
-          </div>
-          <div className="flex items-center justify-between mt-2">
-            <span style={{ ...label, fontSize: "0.6rem", color: C.textDim }}>
-              {estimatedCourses} courses
-            </span>
-            <span style={{ ...label, fontSize: "0.6rem", color: C.textDim }}>
-              Efficacite {efficiency}%
+            <span
+              className="uppercase tracking-[0.1em]"
+              style={{
+                ...label,
+                fontSize: "0.65rem",
+                fontWeight: 500,
+                color:
+                  fieldState === "SATURE" ? C.red :
+                  fieldState === "DENSE" ? C.amber : C.textMid,
+              }}
+            >
+              {fieldState}
             </span>
           </div>
         </div>
 
-        {/* Axes */}
-        <div className="px-5 py-4" style={{ borderBottom: `1px solid ${C.border}` }}>
+        {/* Corridors */}
+        <div className="px-5 py-4">
           <span
-            className="uppercase tracking-[0.15em]"
-            style={{ ...label, fontSize: "0.55rem", color: C.textDim }}
+            className="block mb-3 uppercase tracking-[0.15em]"
+            style={{ ...label, fontSize: "0.5rem", color: C.textGhost }}
           >
-            AXES
+            CORRIDORS
           </span>
-          <div className="flex flex-col mt-3 gap-2">
+          <div className="flex flex-col gap-2.5">
             {corridorStatuses.map((corridor) => (
               <div key={corridor.id} className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span
-                    className="w-14 uppercase tracking-[0.1em]"
-                    style={{ ...label, fontSize: "0.75rem", color: C.text }}
+                    className="w-12 uppercase tracking-[0.1em]"
+                    style={{ ...label, fontSize: "0.75rem", fontWeight: 500, color: C.text }}
                   >
                     {corridor.label}
                   </span>
@@ -319,128 +283,64 @@ export function DispatchPanel({
                         width: 6,
                         height: 6,
                         borderRadius: "50%",
-                        backgroundColor:
-                          corridor.status === "dense" ? C.amber : C.textGhost,
+                        backgroundColor: getStatusColor(corridor.status),
                       }}
                     />
                     <span
-                      className="uppercase tracking-[0.1em]"
+                      className="uppercase tracking-[0.08em]"
                       style={{
                         ...label,
-                        fontSize: "0.7rem",
-                        fontWeight: corridor.status === "dense" ? 500 : 400,
-                        color: corridor.status === "dense" ? C.amber : C.textDim,
+                        fontSize: "0.65rem",
+                        color: getStatusColor(corridor.status),
                       }}
                     >
-                      {corridor.status === "dense" ? "DENSE" : "FLUIDE"}
+                      {getStatusLabel(corridor.status)}
                     </span>
                   </div>
                 </div>
-                {corridor.impact && (
-                  <span
-                    style={{
-                      ...label,
-                      fontSize: "0.6rem",
-                      color: C.textDim,
-                      maxWidth: 120,
-                      textAlign: "right",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {corridor.impact.length > 20
-                      ? corridor.impact.substring(0, 18) + "..."
-                      : corridor.impact}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Impacts actifs */}
-        {activeImpacts.length > 0 && (
-          <div className="px-5 py-4" style={{ borderBottom: `1px solid ${C.border}` }}>
-            <span
-              className="uppercase tracking-[0.15em]"
-              style={{ ...label, fontSize: "0.55rem", color: C.textDim }}
-            >
-              IMPACTS ACTIFS
-            </span>
-            <div className="flex flex-col mt-3 gap-2">
-              {activeImpacts.map((impact, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span style={{ ...label, fontSize: "0.75rem", color: C.amber }}>
-                    {impact.signal.length > 25
-                      ? impact.signal.substring(0, 23) + "..."
-                      : impact.signal}
-                  </span>
-                  <span style={{ ...label, fontSize: "0.7rem", color: C.textGhost }}>
-                    →
-                  </span>
-                  <span style={{ ...label, fontSize: "0.7rem", color: C.textDim }}>
-                    {impact.effect}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* +2H Timeline */}
-        <div className="px-5 py-4">
-          <span
-            className="uppercase tracking-[0.15em]"
-            style={{ ...label, fontSize: "0.55rem", color: C.textDim }}
-          >
-            +2H
-          </span>
-          <div className="flex flex-col mt-3">
-            {timelineSlots.map((slot, i) => (
-              <div
-                key={i}
-                className="flex items-center gap-4 py-2.5"
-                style={{ borderBottom: i < timelineSlots.length - 1 ? `1px solid ${C.border}` : "none" }}
-              >
                 <span
                   style={{
                     ...mono,
-                    fontSize: "0.85rem",
-                    color: C.textMid,
-                    width: 50,
+                    fontSize: "0.6rem",
+                    color: C.textGhost,
                   }}
                 >
-                  {slot.time}
-                </span>
-                <div className="flex items-center gap-2">
-                  <div
-                    style={{
-                      width: 5,
-                      height: 5,
-                      borderRadius: "50%",
-                      backgroundColor: slot.phaseColor,
-                    }}
-                  />
-                  <span
-                    className="uppercase tracking-[0.1em]"
-                    style={{
-                      ...label,
-                      fontSize: "0.65rem",
-                      color: slot.phaseColor,
-                      width: 85,
-                    }}
-                  >
-                    {slot.phase}
-                  </span>
-                </div>
-                <span style={{ ...label, fontSize: "0.85rem", color: C.text }}>
-                  {slot.zone}
+                  {Math.round(corridor.avgSat)}%
                 </span>
               </div>
             ))}
           </div>
         </div>
+
+        {/* Active Impacts (if any) */}
+        {activeImpacts.length > 0 && (
+          <div
+            className="px-5 py-3"
+            style={{ borderTop: `1px solid ${C.border}` }}
+          >
+            <span
+              className="block mb-2 uppercase tracking-[0.1em]"
+              style={{ ...label, fontSize: "0.5rem", color: C.textGhost }}
+            >
+              IMPACTS
+            </span>
+            {activeImpacts.slice(0, 3).map((impact, i) => (
+              <div key={i} className="flex items-center gap-2 mb-1">
+                <span
+                  className="uppercase"
+                  style={{ ...label, fontSize: "0.55rem", color: C.amber }}
+                >
+                  {impact.corridor}
+                </span>
+                <span style={{ ...label, fontSize: "0.6rem", color: C.textDim }}>
+                  {impact.signal.length > 28
+                    ? impact.signal.slice(0, 26) + "..."
+                    : impact.signal}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </motion.div>
     </motion.div>
   );
