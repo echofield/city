@@ -32,6 +32,7 @@ import type {
   DriverPosition,
 } from '@/types/flow-state'
 import type { StationSignal } from '@/lib/signal-fetchers/sncf'
+import type { ForcedMobilityWave } from '@/lib/flow-engine/forced-mobility'
 
 // ═══════════════════════════════════════════════════════════════════
 // HELPERS
@@ -558,6 +559,105 @@ function buildSignalsFromStations(
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// BUILD SIGNALS FROM AIRPORT FORCED MOBILITY WAVES
+// ═══════════════════════════════════════════════════════════════════
+
+function buildSignalsFromAirportWaves(
+  waves: ForcedMobilityWave[],
+  now: Date
+): Signal[] {
+  if (!waves || waves.length === 0) return []
+
+  return waves.map((wave) => {
+    const windowStart = new Date(wave.wave_start)
+    const windowEnd = new Date(wave.wave_end)
+
+    const minUntilStart = Math.round((windowStart.getTime() - now.getTime()) / 60000)
+    const minUntilEnd = Math.round((windowEnd.getTime() - now.getTime()) / 60000)
+
+    const isActive = minUntilStart <= 0 && minUntilEnd > 0
+    const isForming = minUntilStart > 0 && minUntilStart <= 30
+    const isExpiring = isActive && minUntilEnd <= 10
+
+    // Build reason from factors
+    const factorLabels: Record<string, string> = {
+      'arrivées_aéroport': 'arrivées',
+      'international': 'vols internationaux',
+      'long_courrier': 'long-courrier',
+      'transport_faible': 'transport faible',
+      'vague_concentrée': 'vague concentrée',
+    }
+    const reasonParts = wave.factors
+      .filter(f => f !== 'arrivées_aéroport') // Already in title
+      .map(f => factorLabels[f] || f)
+    const detailPart = reasonParts.length > 0 ? ` — ${reasonParts.join(', ')}` : ''
+
+    // Determine corridor from wave
+    const corridor: Corridor = wave.corridor === 'nord' || wave.corridor === 'sud'
+      ? wave.corridor
+      : 'nord' // CDG default
+
+    // Format time window
+    const formatTime = (d: Date) =>
+      `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+
+    const signal: Signal = {
+      id: wave.id,
+      kind: isActive ? 'live' : isForming ? 'soon' : 'nearby',
+      type: 'banlieue_pressure',
+      title: wave.venue || wave.zone,
+      zone: wave.zone,
+      time_window: {
+        start: wave.wave_start,
+        end: wave.wave_end,
+        label: `${formatTime(windowStart)} – ${formatTime(windowEnd)}`,
+      },
+      reason: `Passagers en sortie${detailPart}`,
+      action: wave.positioning_hint,
+      priority_score: wave.final_score,
+      intensity: scoreToIntensity(wave.final_score),
+      confidence: wave.confidence,
+      direction: corridor,
+      minutes_until_start: minUntilStart > 0 ? minUntilStart : undefined,
+      minutes_until_end: isActive ? minUntilEnd : undefined,
+      is_active: isActive,
+      is_expiring: isExpiring,
+      is_forming: isForming,
+      is_compound: wave.category === 'compound',
+      overlapping_factors: wave.factors,
+      source: 'aviationstack',
+      lat: wave.lat,
+      lng: wave.lng,
+    }
+
+    // Display labels
+    if (wave.category === 'compound') {
+      signal.display_label = 'AÉROPORT + METRO FAIBLE'
+    } else if (isActive) {
+      signal.display_label = 'AÉROPORT ACTIF'
+    } else if (isForming) {
+      signal.display_label = 'VAGUE AÉROPORT'
+    } else {
+      signal.display_label = 'AÉROPORT'
+    }
+
+    // Ride profile hint
+    switch (wave.likely_ride_profile) {
+      case 'premium_long':
+        signal.display_sublabel = 'Courses longues garanties'
+        break
+      case 'long':
+        signal.display_sublabel = 'Courses longues probables'
+        break
+      default:
+        signal.display_sublabel = 'Courses moyennes-longues'
+    }
+
+    return signal
+  })
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // BUILD WEEK SIGNALS FROM WEEKLY SKELETON
 // ═══════════════════════════════════════════════════════════════════
 
@@ -770,10 +870,11 @@ export interface BuildSignalFeedInput {
   driverPosition?: DriverPosition
   zoneCoords?: Record<string, { lat: number; lng: number }>
   stationSignals?: StationSignal[]
+  airportWaves?: ForcedMobilityWave[]
 }
 
 export function buildSignalFeed(input: BuildSignalFeedInput): SignalFeed {
-  const { flowState, driverPosition, zoneCoords, stationSignals } = input
+  const { flowState, driverPosition, zoneCoords, stationSignals, airportWaves } = input
   const now = new Date()
 
   // Build signals from all sources
@@ -784,6 +885,7 @@ export function buildSignalFeed(input: BuildSignalFeedInput): SignalFeed {
     ...buildSignalsFromRamifications(flowState.ramifications ?? [], flowState.zoneSaturation ?? {}, now),
     ...buildSignalsFromBanlieueHubs(flowState.banlieueHubs, now),
     ...buildSignalsFromStations(stationSignals ?? [], now),
+    ...buildSignalsFromAirportWaves(airportWaves ?? [], now),
   ]
 
   // Enrich with proximity if driver position available
