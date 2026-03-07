@@ -78,6 +78,109 @@ function getIntensityColor(intensity: number): string {
   return C.textDim;
 }
 
+// ── Countdown formatter ──
+// Creates urgency and habit loops
+
+function formatCountdown(minutesUntil: number | undefined, isActive: boolean): {
+  text: string;
+  urgency: "imminent" | "soon" | "forming" | "active" | "none";
+} {
+  if (isActive) {
+    return { text: "ACTIF", urgency: "active" };
+  }
+
+  if (minutesUntil === undefined || minutesUntil < 0) {
+    return { text: "", urgency: "none" };
+  }
+
+  if (minutesUntil <= 5) {
+    return { text: "imminent", urgency: "imminent" };
+  }
+  if (minutesUntil <= 15) {
+    return { text: `dans ${minutesUntil}m`, urgency: "soon" };
+  }
+  if (minutesUntil <= 60) {
+    return { text: `dans ${minutesUntil}m`, urgency: "forming" };
+  }
+  // > 60 min
+  const hours = Math.floor(minutesUntil / 60);
+  const mins = minutesUntil % 60;
+  if (mins === 0) {
+    return { text: `dans ~${hours}h`, urgency: "none" };
+  }
+  return { text: `dans ~${hours}h${mins > 15 ? String(mins).padStart(2, "0") : ""}`, urgency: "none" };
+}
+
+function getCountdownColor(urgency: string): string {
+  switch (urgency) {
+    case "imminent": return C.amber;
+    case "soon": return C.green;
+    case "active": return C.greenBright;
+    case "forming": return C.textMid;
+    default: return C.textGhost;
+  }
+}
+
+// ── Rare Opportunity detection ──
+// High-value signals with low competition
+
+function isRareOpportunity(signal: Signal): boolean {
+  const source = signal.source || "";
+  const type = signal.type || "";
+  const reason = (signal.reason || "").toLowerCase();
+  const zone = (signal.zone || "").toLowerCase();
+
+  // Banlieue events = rare by definition
+  if (type === "banlieue_pressure") return true;
+
+  // Chateau/gala events
+  if (reason.includes("chateau") || reason.includes("gala") || reason.includes("mariage")) {
+    return true;
+  }
+
+  // Late night festivals (no metro)
+  if (reason.includes("festival") && (reason.includes("rer") || reason.includes("metro"))) {
+    return true;
+  }
+
+  // Deep banlieue zones
+  const banlieueZones = ["villepinte", "chevreuse", "maincy", "vaux", "meridon"];
+  if (banlieueZones.some(z => zone.includes(z))) return true;
+
+  // Airport early morning (03:00-06:00)
+  if (zone.includes("cdg") || zone.includes("orly")) {
+    const hour = new Date().getHours();
+    if (hour >= 3 && hour <= 6) return true;
+  }
+
+  // Very high VTC probability signals
+  if (signal.confidence === "high" && signal.intensity >= 4) {
+    // Check if it's a premium crowd signal
+    if (reason.includes("premium") || reason.includes("vip")) return true;
+  }
+
+  return false;
+}
+
+function getRareOpportunityReason(signal: Signal): string {
+  const reason = (signal.reason || "").toLowerCase();
+  const zone = (signal.zone || "").toLowerCase();
+
+  if (reason.includes("chateau") || reason.includes("gala")) {
+    return "Trajet long · Peu de chauffeurs";
+  }
+  if (zone.includes("villepinte") || reason.includes("festival")) {
+    return "Zero metro · Courses garanties";
+  }
+  if (zone.includes("cdg") || zone.includes("orly")) {
+    return "Courses longues · Faible concurrence";
+  }
+  if (reason.includes("premium") || reason.includes("vip")) {
+    return "Clientele premium · Pourboires";
+  }
+  return "Opportunite rare";
+}
+
 function getKindColor(kind: Signal["kind"]): string {
   switch (kind) {
     case "live": return C.green;
@@ -253,12 +356,19 @@ function getProximityDisplay(signal: Signal): { text: string; color: string } | 
 
 function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean }) {
   const intensityColor = getIntensityColor(signal.intensity);
-  const displayLabel = getDisplayLabel(signal);
   const confBadge = getConfidenceBadge(signal.confidence);
   const proximityDisplay = getProximityDisplay(signal);
 
   // Generate concrete, causality-driven action copy
   const concreteAction = generateConcreteAction(signal);
+
+  // Countdown
+  const countdown = formatCountdown(signal.minutes_until_start, signal.is_active ?? false);
+  const countdownColor = getCountdownColor(countdown.urgency);
+
+  // Rare opportunity detection
+  const isRare = isRareOpportunity(signal);
+  const rareReason = isRare ? getRareOpportunityReason(signal) : null;
 
   // Positioning info (secondary)
   const positioningHint = signal.action?.includes("Position")
@@ -274,13 +384,43 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
       className="px-4 py-3"
       style={{
         backgroundColor: isTop ? `${C.surface}` : C.surface,
-        border: isTop ? `1px solid ${C.greenDim}` : `1px solid ${C.border}`,
+        border: isRare ? `1px solid ${C.amber}40` : isTop ? `1px solid ${C.greenDim}` : `1px solid ${C.border}`,
         borderRadius: 4,
-        borderLeft: `3px solid ${intensityColor}`,
-        boxShadow: isTop ? `0 0 12px ${C.green}15` : "none",
+        borderLeft: `3px solid ${isRare ? C.amber : intensityColor}`,
+        boxShadow: isRare ? `0 0 12px ${C.amber}20` : isTop ? `0 0 12px ${C.green}15` : "none",
       }}
     >
-      {/* ROW 1: Concrete causality (WHY + WHAT) */}
+      {/* RARE OPPORTUNITY banner */}
+      {isRare && (
+        <div
+          className="flex items-center gap-2 mb-2 pb-2"
+          style={{ borderBottom: `1px solid ${C.amber}25` }}
+        >
+          <span
+            className="uppercase tracking-[0.12em]"
+            style={{
+              ...label,
+              fontSize: "0.5rem",
+              fontWeight: 600,
+              color: C.amber,
+            }}
+          >
+            RARE OPPORTUNITY
+          </span>
+          <span
+            style={{
+              ...label,
+              fontSize: "0.55rem",
+              color: C.textDim,
+              fontStyle: "italic",
+            }}
+          >
+            {rareReason}
+          </span>
+        </div>
+      )}
+
+      {/* ROW 1: Concrete causality (WHY + WHAT) + Countdown */}
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <span style={{ color: intensityColor, fontSize: "0.85rem", fontWeight: 600 }}>→</span>
@@ -296,20 +436,23 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
             {concreteAction}
           </span>
         </div>
-        {/* Timing badge */}
-        <span
-          className="uppercase tracking-[0.08em] px-1.5 py-0.5 shrink-0"
-          style={{
-            ...label,
-            fontSize: "0.45rem",
-            fontWeight: 500,
-            color: getKindColor(signal.kind),
-            backgroundColor: `${getKindColor(signal.kind)}12`,
-            borderRadius: 2,
-          }}
-        >
-          {displayLabel}
-        </span>
+        {/* Countdown badge */}
+        {countdown.text && (
+          <span
+            className="uppercase tracking-[0.08em] px-1.5 py-0.5 shrink-0"
+            style={{
+              ...mono,
+              fontSize: "0.55rem",
+              fontWeight: countdown.urgency === "imminent" ? 600 : 400,
+              color: countdownColor,
+              backgroundColor: countdown.urgency === "active" ? `${C.green}15` :
+                              countdown.urgency === "imminent" ? `${C.amber}15` : "transparent",
+              borderRadius: 2,
+            }}
+          >
+            {countdown.text}
+          </span>
+        )}
       </div>
 
       {/* ROW 2: Time window + badges */}
@@ -318,8 +461,8 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
           <span
             style={{
               ...mono,
-              fontSize: "0.75rem",
-              color: C.textMid,
+              fontSize: "0.7rem",
+              color: C.textDim,
             }}
           >
             {signal.time_window.label || signal.time_window.start}
@@ -329,7 +472,7 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
               className="px-1 py-0.5"
               style={{
                 ...mono,
-                fontSize: "0.6rem",
+                fontSize: "0.55rem",
                 color: proximityDisplay.color,
                 backgroundColor: `${proximityDisplay.color}12`,
                 borderRadius: 2,
@@ -378,7 +521,7 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
           lineHeight: 1.3,
         }}
       >
-        {positioningHint ? `📍 ${positioningHint}` : truncateReason(signal.reason)}
+        {positioningHint ? `${positioningHint}` : truncateReason(signal.reason)}
       </p>
 
       {/* Overlapping factors - only for compound signals, inline */}
@@ -848,6 +991,146 @@ function CalmState({
   );
 }
 
+// ── City Pulse Bar ──
+// Shows pressure distribution across corridors at a glance
+
+interface CorridorPulse {
+  id: string;
+  label: string;
+  intensity: number; // 0-1
+}
+
+function computeCorridorPulses(signals: Signal[], flowState: FlowState | null): CorridorPulse[] {
+  // Zone to corridor mapping
+  const zoneToCorridorMap: Record<string, string> = {
+    "17": "nord", "18": "nord", "19": "nord", "9": "nord", "10": "nord",
+    "11": "est", "12": "est", "20": "est", "3": "est", "4": "est",
+    "13": "sud", "14": "sud", "5": "sud", "6": "sud",
+    "16": "ouest", "15": "ouest", "7": "ouest", "8": "ouest",
+  };
+
+  // Compute intensity per corridor
+  const corridorScores: Record<string, number> = {
+    nord: 0, est: 0, sud: 0, ouest: 0
+  };
+
+  for (const signal of signals) {
+    const arr = signal.arrondissement || "";
+    const corridor = zoneToCorridorMap[arr];
+    if (corridor) {
+      // Weight by priority score and activity
+      const weight = (signal.is_active ? 1.5 : 1.0) * (signal.intensity / 4);
+      corridorScores[corridor] += weight;
+    }
+
+    // Also check zone text for corridor hints
+    const zoneLower = (signal.zone || "").toLowerCase();
+    if (zoneLower.includes("pigalle") || zoneLower.includes("montmartre") || zoneLower.includes("cdg")) {
+      corridorScores["nord"] += 0.5;
+    } else if (zoneLower.includes("bercy") || zoneLower.includes("bastille") || zoneLower.includes("marais")) {
+      corridorScores["est"] += 0.5;
+    } else if (zoneLower.includes("trocadero") || zoneLower.includes("champs") || zoneLower.includes("defense")) {
+      corridorScores["ouest"] += 0.5;
+    }
+  }
+
+  // Also use flowState zone heat if available
+  const zoneHeat = flowState?.zoneHeat ?? {};
+  for (const [zoneId, heat] of Object.entries(zoneHeat)) {
+    const corridor = zoneToCorridorMap[zoneId];
+    if (corridor && typeof heat === "number") {
+      corridorScores[corridor] += heat * 2;
+    }
+  }
+
+  // Normalize to 0-1
+  const maxScore = Math.max(...Object.values(corridorScores), 1);
+  const corridors: CorridorPulse[] = [
+    { id: "est", label: "EST", intensity: corridorScores["est"] / maxScore },
+    { id: "nord", label: "NORD", intensity: corridorScores["nord"] / maxScore },
+    { id: "ouest", label: "OUEST", intensity: corridorScores["ouest"] / maxScore },
+    { id: "sud", label: "SUD", intensity: corridorScores["sud"] / maxScore },
+  ];
+
+  // Sort by intensity descending
+  corridors.sort((a, b) => b.intensity - a.intensity);
+
+  return corridors;
+}
+
+function CityPulseBar({ signals, flowState }: { signals: Signal[]; flowState: FlowState | null }) {
+  const pulses = computeCorridorPulses(signals, flowState);
+  const now = new Date();
+  const dayName = ["DIM", "LUN", "MAR", "MER", "JEU", "VEN", "SAM"][now.getDay()];
+  const timeStr = now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <div
+      className="px-4 py-2"
+      style={{
+        backgroundColor: C.surface,
+        borderBottom: `1px solid ${C.border}`,
+      }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2">
+        <span
+          className="uppercase tracking-[0.15em]"
+          style={{
+            ...label,
+            fontSize: "0.5rem",
+            color: C.textGhost,
+          }}
+        >
+          CHAMP VILLE
+        </span>
+        <span
+          style={{
+            ...mono,
+            fontSize: "0.55rem",
+            color: C.textDim,
+          }}
+        >
+          {dayName} {timeStr}
+        </span>
+      </div>
+
+      {/* Corridor bars */}
+      <div className="flex flex-col gap-1">
+        {pulses.map((pulse) => (
+          <div key={pulse.id} className="flex items-center gap-2">
+            <span
+              className="w-10 uppercase tracking-[0.08em]"
+              style={{
+                ...label,
+                fontSize: "0.55rem",
+                color: pulse.intensity > 0.5 ? C.text : C.textDim,
+              }}
+            >
+              {pulse.label}
+            </span>
+            <div
+              className="flex-1 h-1.5 rounded-sm overflow-hidden"
+              style={{ backgroundColor: `${C.textGhost}20` }}
+            >
+              <div
+                style={{
+                  width: `${Math.max(5, pulse.intensity * 100)}%`,
+                  height: "100%",
+                  backgroundColor: pulse.intensity > 0.7 ? C.green :
+                                  pulse.intensity > 0.4 ? C.amber : C.textDim,
+                  borderRadius: 2,
+                  transition: "width 0.3s ease",
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Live Screen ──
 
 interface LiveScreenProps {
@@ -944,6 +1227,9 @@ export function LiveScreen({ signalFeed, flowState, onOpenDispatch }: LiveScreen
           </button>
         </div>
       </div>
+
+      {/* City Pulse Bar - pressure distribution at a glance */}
+      <CityPulseBar signals={signals} flowState={flowState} />
 
       {/* Content */}
       {showCalm ? (
