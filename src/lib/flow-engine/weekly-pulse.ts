@@ -22,6 +22,7 @@
  */
 
 import { RideProfile } from './forced-mobility'
+import type { CityConfig } from '@/core/types'
 
 // ═══════════════════════════════════════════════════════════════════
 // TYPES
@@ -355,13 +356,27 @@ export const WEEKLY_RHYTHM: Record<PredictableWaveCategory, DayModifier[]> = {
 // TIME UTILITIES
 // ═══════════════════════════════════════════════════════════════════
 
+/** Default timezone (Paris for backwards compatibility) */
+const DEFAULT_TIMEZONE = 'Europe/Paris'
+
 function parseTimeToMinutes(timeStr: string): number {
   const [hours, minutes] = timeStr.split(':').map(Number)
   return hours * 60 + minutes
 }
 
+/**
+ * Get current time in specified timezone
+ * @param timezone - IANA timezone string (default: Europe/Paris)
+ */
+function getCurrentCityTime(timezone: string = DEFAULT_TIMEZONE): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: timezone }))
+}
+
+/**
+ * @deprecated Use getCurrentCityTime with timezone parameter
+ */
 function getCurrentParisTime(): Date {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' }))
+  return getCurrentCityTime('Europe/Paris')
 }
 
 function getDayOfWeek(date: Date): DayOfWeek {

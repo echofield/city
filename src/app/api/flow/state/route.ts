@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+import { getCityConfig, getDefaultCityId, isSupportedCity } from '@/cities'
 import { orchestrate } from '@/lib/shift-conductor/orchestrator'
 import { compiledBriefAndMoveToFlowState, TERRITORY_IDS } from '@/lib/flow-engine/flow-state-adapter'
 import { compiledFromCitySignalsPackV1 } from '@/lib/flow-engine/compile-from-pack'
@@ -158,12 +159,12 @@ function getMockFlowState(sessionStart?: number): FlowState {
 }
 
 /** Get tonight's date (handles cross-midnight: before 06:00 = yesterday) */
-function getTonightDate(): string {
+function getTonightDate(timezone: string = 'Europe/Paris'): string {
   const now = new Date()
-  const parisTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Paris' }))
-  const hour = parisTime.getHours()
-  if (hour < 6) parisTime.setDate(parisTime.getDate() - 1)
-  return parisTime.toISOString().slice(0, 10)
+  const localTime = new Date(now.toLocaleString('en-US', { timeZone: timezone }))
+  const hour = localTime.getHours()
+  if (hour < 6) localTime.setDate(localTime.getDate() - 1)
+  return localTime.toISOString().slice(0, 10)
 }
 
 /** Get city signals with caching — PRIORITIZES live compilation when no tonight pack in storage */
@@ -270,6 +271,11 @@ export async function GET(request: Request) {
   const { lat, lng, sessionStart, zone, mock } = validation.data
   const nocache = searchParams.get('nocache') === '1'
   const recompile = searchParams.get('recompile') === '1'
+
+  // City selection (default: paris)
+  const cityParam = searchParams.get('city') ?? getDefaultCityId()
+  const cityId = isSupportedCity(cityParam) ? cityParam : getDefaultCityId()
+  const cityConfig = getCityConfig(cityId)
 
   // Build driver position if coordinates provided
   let driverPosition: DriverPosition | undefined

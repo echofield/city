@@ -22,6 +22,7 @@
  */
 
 import type { CorridorDirection } from '@/lib/signal-fetchers/types'
+import type { TransportRules } from '@/core/types'
 
 // ═══════════════════════════════════════════════════════════════════
 // TYPES
@@ -97,8 +98,75 @@ export const COMPOUND_BOOST = 1.3
 // ═══════════════════════════════════════════════════════════════════
 
 /**
+ * Parse time string "HH:MM" to decimal hours
+ */
+function parseTimeToDecimal(timeStr: string): number {
+  const [hours, minutes] = timeStr.split(':').map(Number)
+  return hours + minutes / 60
+}
+
+/**
+ * Compute transport weakness using city-specific transport rules.
+ * Returns 0-100 where higher = weaker public transport = better for VTC.
+ */
+export function computeTransportWeaknessWithRules(
+  hour: number,
+  minute: number,
+  rules: TransportRules,
+  isWeekend: boolean = false
+): number {
+  const timeDecimal = hour + minute / 60
+  const metroStart = parseTimeToDecimal(rules.metroStart)
+  const metroEnd = parseTimeToDecimal(isWeekend ? rules.weekendMetroEnd : rules.metroEnd)
+
+  // Fully closed period (between end and start)
+  if (metroEnd < metroStart) {
+    // Normal case: metro ends after midnight (e.g., 00:30)
+    if (timeDecimal >= metroEnd + 0.5 && timeDecimal < metroStart) {
+      return 100 // No service at all
+    }
+  }
+
+  // Just closed (within 30 min after close)
+  const justClosedEnd = metroEnd + 0.5
+  if (timeDecimal >= metroEnd && timeDecimal < justClosedEnd) {
+    return 90
+  }
+
+  // Last service period (within 30 min before close)
+  const lastServiceStart = metroEnd > 0.5 ? metroEnd - 0.5 : 23.5
+  if (timeDecimal >= lastServiceStart && timeDecimal < metroEnd) {
+    return 75
+  }
+
+  // After weakness threshold (strong)
+  if (hour >= rules.weaknessThresholds.strong) {
+    return 60
+  }
+
+  // One hour before strong weakness
+  if (hour >= rules.weaknessThresholds.strong - 1) {
+    return 35
+  }
+
+  // Two hours before strong weakness
+  if (hour >= rules.weaknessThresholds.strong - 2) {
+    return 20
+  }
+
+  // Early morning sparse service
+  if (timeDecimal >= metroStart && timeDecimal < metroStart + 1) {
+    return 40
+  }
+
+  // Full service
+  return 10
+}
+
+/**
  * Compute transport weakness based on time of day.
- * Paris metro: ~05:30-00:30, weakens after 23:00
+ * Uses default Paris metro hours: ~05:30-00:30, weakens after 23:00
+ * @deprecated Use computeTransportWeaknessWithRules with city config instead
  */
 export function computeTransportWeakness(hour: number, minute: number = 0): number {
   const timeDecimal = hour + minute / 60
