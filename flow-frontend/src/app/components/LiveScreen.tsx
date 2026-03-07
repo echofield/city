@@ -2,10 +2,24 @@
 // Two-layer signal feed: STRUCTURAL (big waves) + LOCAL (micro opportunities)
 // Makes the city feel alive with real venues, events, and timings
 
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import type { Signal, SignalFeed } from "../types/signal";
 import type { FlowState, ShiftPhase } from "../types/flow-state";
 import { C, mono, label } from "./theme";
+
+// ── City Briefing Types ──
+
+interface CityBriefingData {
+  briefing: {
+    lines: string[];
+    generatedAt: string;
+    signalCount: number;
+    cached: boolean;
+  };
+  shiftPhase: string;
+  currentTime: string;
+}
 
 // ── Signal Categories with Icons ──
 // Fast visual scanning for drivers
@@ -1291,6 +1305,161 @@ function CityPulseBar({ signals, flowState }: { signals: Signal[]; flowState: Fl
   );
 }
 
+// ── City Briefing Component ──
+// AI-synthesized tactical summary at top of LIVE
+// Rules detect. LLMs express.
+
+function CityBriefing({ signalCount }: { signalCount: number }) {
+  const [briefing, setBriefing] = useState<CityBriefingData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    // Only fetch if we have signals
+    if (signalCount === 0) {
+      setBriefing(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function fetchBriefing() {
+      setLoading(true);
+      setError(false);
+
+      try {
+        const res = await fetch("/api/flow/briefing");
+        if (!res.ok) throw new Error("Briefing fetch failed");
+
+        const data: CityBriefingData = await res.json();
+        if (!cancelled) {
+          setBriefing(data);
+        }
+      } catch (err) {
+        console.error("[CityBriefing] Fetch error:", err);
+        if (!cancelled) {
+          setError(true);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    fetchBriefing();
+
+    // Refresh briefing every 5 minutes
+    const interval = setInterval(fetchBriefing, 5 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [signalCount > 0]); // Re-fetch when signals appear/disappear
+
+  // Don't show if no signals
+  if (signalCount === 0) return null;
+
+  return (
+    <div
+      className="px-4 py-3"
+      style={{
+        backgroundColor: `${C.green}08`,
+        borderBottom: `1px solid ${C.border}`,
+      }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span style={{ fontSize: "0.9rem" }}>📡</span>
+          <span
+            className="uppercase tracking-[0.15em]"
+            style={{
+              ...label,
+              fontSize: "0.5rem",
+              color: C.green,
+              fontWeight: 600,
+            }}
+          >
+            BRIEFING VILLE
+          </span>
+        </div>
+        {briefing?.briefing?.cached && (
+          <span
+            style={{
+              ...mono,
+              fontSize: "0.5rem",
+              color: C.textGhost,
+            }}
+          >
+            cache
+          </span>
+        )}
+      </div>
+
+      {/* Content */}
+      {loading && !briefing && (
+        <div
+          className="py-2"
+          style={{
+            ...label,
+            fontSize: "0.7rem",
+            color: C.textDim,
+            fontStyle: "italic",
+          }}
+        >
+          Analyse ville en cours...
+        </div>
+      )}
+
+      {error && !briefing && (
+        <div
+          className="py-1"
+          style={{
+            ...label,
+            fontSize: "0.7rem",
+            color: C.textDim,
+          }}
+        >
+          Briefing indisponible
+        </div>
+      )}
+
+      {briefing?.briefing?.lines && (
+        <div className="flex flex-col gap-1">
+          {briefing.briefing.lines.map((line, i) => (
+            <div
+              key={i}
+              className="flex items-start gap-2"
+            >
+              <span
+                style={{
+                  color: C.green,
+                  fontSize: "0.6rem",
+                  lineHeight: 1.6,
+                }}
+              >
+                •
+              </span>
+              <span
+                style={{
+                  ...label,
+                  fontSize: "0.75rem",
+                  color: C.text,
+                  lineHeight: 1.4,
+                }}
+              >
+                {line}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Live Screen ──
 
 interface LiveScreenProps {
@@ -1394,6 +1563,9 @@ export function LiveScreen({ signalFeed, flowState, onOpenDispatch }: LiveScreen
 
       {/* City Pulse Bar - pressure distribution at a glance */}
       <CityPulseBar signals={signals} flowState={flowState} />
+
+      {/* City Briefing - AI-synthesized tactical summary */}
+      <CityBriefing signalCount={signals.length} />
 
       {/* Content */}
       {showCalm ? (
