@@ -22,6 +22,7 @@ import type { TonightPack } from '@/lib/signal-fetchers/types'
 import { tonightPackToCitySignalsPack, isTonightPack } from '@/lib/city-signals/tonightPackAdapter'
 import type { FlowState, Ramification, DriverPosition } from '@/types/flow-state'
 import { buildSignalFeed, buildWeekCalendar } from '@/lib/flow-engine/signal-builder'
+import { getStationSignals } from '@/lib/signal-fetchers/sncf'
 import type { CitySignalsPackV1 } from '@/types/city-signals-pack'
 import type { CompiledBrief } from '@/lib/prompts/contracts'
 import type { FlowCard } from '@/types/flow-card'
@@ -369,10 +370,17 @@ export async function GET(request: Request) {
     // Compute banlieue hub states from pack and ramifications
     flowState.banlieueHubs = computeBanlieueHubs(pack, ramifications)
 
+    // Fetch station signals (cached, non-blocking)
+    const stationSignals = await getStationSignals().catch((err) => {
+      console.warn('[flow/state] Station signals unavailable:', err)
+      return []
+    })
+
     // Build unified signal feed (v2.0 signal model for LIVE screen)
     flowState.signalFeed = buildSignalFeed({
       flowState,
       driverPosition,
+      stationSignals,
       // Zone coordinates will be populated from pack or defaults
     })
 

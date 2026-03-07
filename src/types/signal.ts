@@ -140,6 +140,10 @@ export interface Signal {
   // ── Display hints ──
   display_label?: string        // "SIGNAL FORT", "PROCHE DE TOI", "ALERTE"
   display_sublabel?: string     // "6 min", "EXIT NOW", "dans 22 min"
+
+  // ── Navigation coordinates (optional — falls back to zone lookup) ──
+  lat?: number
+  lng?: number
 }
 
 // ═══════════════════════════════════════════════════════════════════

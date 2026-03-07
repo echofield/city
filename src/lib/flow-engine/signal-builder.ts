@@ -31,6 +31,7 @@ import type {
   BanlieueHubState,
   DriverPosition,
 } from '@/types/flow-state'
+import type { StationSignal } from '@/lib/signal-fetchers/sncf'
 
 // ═══════════════════════════════════════════════════════════════════
 // HELPERS
@@ -483,6 +484,80 @@ function buildSignalsFromBanlieueHubs(
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// BUILD SIGNALS FROM STATION ARRIVALS (SNCF)
+// ═══════════════════════════════════════════════════════════════════
+
+function buildSignalsFromStations(
+  stationSignals: StationSignal[],
+  now: Date
+): Signal[] {
+  if (!stationSignals || stationSignals.length === 0) return []
+
+  return stationSignals.map((station) => {
+    const windowStart = new Date(station.window.start)
+    const windowEnd = station.window.end ? new Date(station.window.end) : new Date(windowStart.getTime() + 45 * 60000)
+
+    const minUntilStart = Math.round((windowStart.getTime() - now.getTime()) / 60000)
+    const minUntilEnd = Math.round((windowEnd.getTime() - now.getTime()) / 60000)
+
+    const isActive = minUntilStart <= 0 && minUntilEnd > 0
+    const isForming = minUntilStart > 0 && minUntilStart <= 30
+    const isExpiring = isActive && minUntilEnd <= 10
+
+    // Build reason with concrete details
+    const parts: string[] = []
+    if (station.arrivalCount > 0) {
+      parts.push(`${station.arrivalCount} trains`)
+    }
+    if (station.estimatedPassengers > 500) {
+      parts.push(`~${Math.round(station.estimatedPassengers / 100) * 100} voyageurs`)
+    }
+    if (station.hasInternational) {
+      parts.push('international')
+    }
+    if (station.hasDelay) {
+      parts.push('retards')
+    }
+    const detailPart = parts.length > 0 ? ` — ${parts.join(', ')}` : ''
+
+    const signal: Signal = {
+      id: station.id,
+      kind: isActive ? 'live' : isForming ? 'soon' : 'nearby',
+      type: 'transport_wave',
+      title: station.stationName,
+      zone: station.stationName,
+      arrondissement: station.zone,
+      time_window: {
+        start: station.window.start,
+        end: station.window.end,
+        label: `${windowStart.getHours().toString().padStart(2, '0')}:${windowStart.getMinutes().toString().padStart(2, '0')}`,
+      },
+      reason: `Arrivées trains${detailPart}`,
+      action: station.entryHint,
+      priority_score: Math.round(station.intensity * 100),
+      intensity: scoreToIntensity(Math.round(station.intensity * 100)),
+      confidence: 'high', // SNCF realtime is authoritative
+      direction: station.corridor as Corridor,
+      minutes_until_start: minUntilStart > 0 ? minUntilStart : undefined,
+      minutes_until_end: isActive ? minUntilEnd : undefined,
+      is_active: isActive,
+      is_expiring: isExpiring,
+      is_forming: isForming,
+      is_compound: false,
+      source: 'sncf_realtime',
+      // Include coordinates for navigation
+      lat: station.lat,
+      lng: station.lng,
+    }
+
+    signal.display_label = isActive ? 'GARE ACTIVE' : isForming ? 'VAGUE TRAIN' : 'GARE'
+    signal.display_sublabel = station.rideProfile
+
+    return signal
+  })
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // BUILD WEEK SIGNALS FROM WEEKLY SKELETON
 // ═══════════════════════════════════════════════════════════════════
 
@@ -694,10 +769,11 @@ export interface BuildSignalFeedInput {
   flowState: FlowState
   driverPosition?: DriverPosition
   zoneCoords?: Record<string, { lat: number; lng: number }>
+  stationSignals?: StationSignal[]
 }
 
 export function buildSignalFeed(input: BuildSignalFeedInput): SignalFeed {
-  const { flowState, driverPosition, zoneCoords } = input
+  const { flowState, driverPosition, zoneCoords, stationSignals } = input
   const now = new Date()
 
   // Build signals from all sources
@@ -707,6 +783,7 @@ export function buildSignalFeed(input: BuildSignalFeedInput): SignalFeed {
     ...buildSignalsFromContextSignals(flowState.signals, now),
     ...buildSignalsFromRamifications(flowState.ramifications ?? [], flowState.zoneSaturation ?? {}, now),
     ...buildSignalsFromBanlieueHubs(flowState.banlieueHubs, now),
+    ...buildSignalsFromStations(stationSignals ?? [], now),
   ]
 
   // Enrich with proximity if driver position available
