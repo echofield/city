@@ -67,6 +67,22 @@ export function FlowApp(props: {
   // Driver GPS position
   const { position: driverPosition, status: gpsStatus } = useDriverPosition(!demoMode);
 
+  // Stabilize driverPosition reference for useEffect dependencies
+  // Only update when lat/lng actually change (not on every object creation)
+  const driverPosRef = useRef<{ lat: number; lng: number } | null>(null);
+  if (driverPosition) {
+    if (
+      !driverPosRef.current ||
+      driverPosRef.current.lat !== driverPosition.lat ||
+      driverPosRef.current.lng !== driverPosition.lng
+    ) {
+      driverPosRef.current = { lat: driverPosition.lat, lng: driverPosition.lng };
+    }
+  } else {
+    driverPosRef.current = null;
+  }
+  const stableDriverPos = driverPosRef.current;
+
   // Offline detection
   useEffect(() => {
     if (typeof navigator === "undefined") return;
@@ -108,7 +124,9 @@ export function FlowApp(props: {
 
     // Enrich signals with client-side proximity if backend didn't compute it
     const enrichWithProximity = (state: FlowStateWithSignals): FlowStateWithSignals => {
-      if (!driverPosition) return state;
+      // Use stable ref to avoid closure over stale driverPosition
+      const currentPos = driverPosRef.current;
+      if (!currentPos) return state;
 
       const signalFeed = state.signalFeed;
       if (!signalFeed?.signals) return state;
@@ -119,8 +137,8 @@ export function FlowApp(props: {
 
         // Compute client-side
         const proximity = computeProximityMinutes(
-          driverPosition.lat,
-          driverPosition.lng,
+          currentPos.lat,
+          currentPos.lng,
           signal.zone || "",
           signal.arrondissement
         );
@@ -140,13 +158,12 @@ export function FlowApp(props: {
       if (!active) return;
       try {
         // Pass driver position to API for backend proximity computation
-        const driverPos = driverPosition
-          ? { lat: driverPosition.lat, lng: driverPosition.lng }
-          : null;
+        // Use stable ref to avoid closure over stale driverPosition
+        const currentPos = driverPosRef.current;
 
         const state = (await (demoMode
           ? fetchFlowStateMock(sessionStartRef.current)
-          : fetchFlowState(sessionStartRef.current, driverPos))) as FlowStateWithSignals;
+          : fetchFlowState(sessionStartRef.current, currentPos))) as FlowStateWithSignals;
         if (!active) return;
         hasEverSucceededRef.current = true;
 
@@ -188,7 +205,10 @@ export function FlowApp(props: {
       clearInterval(id);
       pollFnRef.current = null;
     };
-  }, [demoMode, pollIntervalMs, driverPosition]);
+    // driverPosition is read from driverPosRef.current inside poll()
+    // so we don't need it in the dependency array (avoids re-polling on every GPS update)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoMode, pollIntervalMs]);
 
   // Manual refresh handler with Around You scan
   const handleRefresh = useCallback(async () => {

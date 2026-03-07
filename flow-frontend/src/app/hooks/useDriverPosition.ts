@@ -293,7 +293,9 @@ export function useDriverPosition(enabled: boolean = true): UseDriverPositionRes
         watchIdRef.current = null;
       }
     };
-  }, [enabled, status]);
+    // Only depend on enabled - status changes should not restart the watcher
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
 
   return { position, status, error };
 }
