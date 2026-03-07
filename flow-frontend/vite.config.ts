@@ -20,20 +20,6 @@ export default defineConfig({
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
 
-  // Build settings for CSP compliance
-  build: {
-    // Use terser for minification (no eval)
-    minify: 'terser',
-    terserOptions: {
-      compress: {
-        // Avoid eval-like constructs
-        evaluate: false,
-      },
-    },
-    // Avoid inline scripts that might trigger CSP
-    cssCodeSplit: true,
-  },
-
   server: {
     proxy: {
       '/api': 'http://localhost:3000',
