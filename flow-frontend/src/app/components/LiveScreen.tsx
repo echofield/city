@@ -1,11 +1,125 @@
 // FLOW — LIVE Screen
-// Tactical ranked card feed driven by signalFeed
-// Not category-based. Ranked by decision value.
+// Two-layer signal feed: STRUCTURAL (big waves) + LOCAL (micro opportunities)
+// Makes the city feel alive with real venues, events, and timings
 
 import { motion, AnimatePresence } from "motion/react";
 import type { Signal, SignalFeed } from "../types/signal";
 import type { FlowState, ShiftPhase } from "../types/flow-state";
 import { C, mono, label } from "./theme";
+
+// ── Signal Categories with Icons ──
+// Fast visual scanning for drivers
+
+type SignalCategory = "concert" | "restaurant" | "theatre" | "airport" | "nightlife" | "train" | "expo" | "festival" | "hotel" | "other";
+
+const CATEGORY_ICONS: Record<SignalCategory, string> = {
+  concert: "🎵",
+  restaurant: "🍽",
+  theatre: "🎭",
+  airport: "✈",
+  nightlife: "🍸",
+  train: "🚆",
+  expo: "🎪",
+  festival: "🎉",
+  hotel: "🏨",
+  other: "📍",
+};
+
+const CATEGORY_LABELS: Record<SignalCategory, string> = {
+  concert: "Concert",
+  restaurant: "Restaurants",
+  theatre: "Théâtre",
+  airport: "Aéroport",
+  nightlife: "Nightlife",
+  train: "Gare",
+  expo: "Expo",
+  festival: "Festival",
+  hotel: "Hôtel",
+  other: "Signal",
+};
+
+function getSignalCategory(signal: Signal): SignalCategory {
+  const reason = (signal.reason || "").toLowerCase();
+  const zone = (signal.zone || "").toLowerCase();
+  const type = signal.type || "";
+  const title = (signal.title || "").toLowerCase();
+
+  // Concert / Arena
+  if (reason.includes("concert") || reason.includes("spectateurs") ||
+      title.includes("arena") || title.includes("zenith") || title.includes("olympia")) {
+    return "concert";
+  }
+
+  // Restaurant
+  if (type === "restaurant" || reason.includes("restaurant") ||
+      reason.includes("palace") || reason.includes("festive")) {
+    return "restaurant";
+  }
+
+  // Theatre / Opera
+  if (reason.includes("theatre") || reason.includes("spectacle") ||
+      reason.includes("opera") || title.includes("chatelet") || title.includes("garnier")) {
+    return "theatre";
+  }
+
+  // Airport
+  if (zone.includes("cdg") || zone.includes("orly") ||
+      reason.includes("aeroport") || reason.includes("vols") || reason.includes("departs")) {
+    return "airport";
+  }
+
+  // Nightlife / Clubs
+  if (type === "nightlife" || reason.includes("club") || reason.includes("techno") ||
+      reason.includes("nightlife") || zone.includes("pigalle") || reason.includes("bars")) {
+    return "nightlife";
+  }
+
+  // Train stations
+  if (zone.includes("gare") || reason.includes("train") || reason.includes("arrivees")) {
+    return "train";
+  }
+
+  // Expo / Salon
+  if (reason.includes("expo") || reason.includes("salon") || reason.includes("visiteurs")) {
+    return "expo";
+  }
+
+  // Festival
+  if (reason.includes("festival") || reason.includes("rer arrete") || type === "banlieue_pressure") {
+    return "festival";
+  }
+
+  // Hotel
+  if (reason.includes("hotel") || reason.includes("palace") || title.includes("costes")) {
+    return "hotel";
+  }
+
+  return "other";
+}
+
+// ── Structural vs Local classification ──
+// Structural = big city waves (arenas, airports, major stations)
+// Local = micro opportunities (restaurant clusters, small venues)
+
+function isStructuralSignal(signal: Signal): boolean {
+  const category = getSignalCategory(signal);
+  const reason = (signal.reason || "").toLowerCase();
+
+  // Always structural: airports, major arenas, expos
+  if (category === "airport") return true;
+  if (category === "concert" && signal.intensity >= 3) return true;
+  if (category === "expo") return true;
+  if (category === "festival" && reason.includes("festival")) return true;
+
+  // Check for large venue indicators
+  if (reason.includes("arena") || reason.includes("stade")) return true;
+  if (reason.includes("20000") || reason.includes("17000") || reason.includes("30000")) return true;
+
+  // Major train stations during rush
+  if (category === "train" && signal.intensity >= 3) return true;
+
+  return false;
+}
 
 // ── Zone abbreviation rules for long venue names ──
 
@@ -351,16 +465,95 @@ function getProximityDisplay(signal: Signal): { text: string; color: string } | 
   return null;
 }
 
-// ── Signal Card (Compressed) ──
-// 3 rows max: ROW1: action + badges | ROW2: zone/title + time | ROW3: short reason
+// ── Extract venue name from signal ──
+
+function extractVenueName(signal: Signal): string {
+  const title = signal.title || "";
+  const displayLabel = signal.display_label || "";
+  const zone = signal.zone || "";
+
+  // Use display_label if it's a venue name (not a generic label)
+  if (displayLabel && !["CONCERT", "EXPO", "BANLIEUE", "EVENT"].includes(displayLabel.toUpperCase())) {
+    return displayLabel;
+  }
+
+  // Extract venue from title (format: "Venue - Event")
+  if (title.includes(" - ")) {
+    return title.split(" - ")[0];
+  }
+
+  // Fallback to zone
+  return zone;
+}
+
+// ── Generate cause/reason line ──
+
+function generateCauseLine(signal: Signal): string {
+  const category = getSignalCategory(signal);
+  const reason = signal.reason || "";
+
+  switch (category) {
+    case "concert":
+      if (reason.includes("spectateurs")) {
+        const match = reason.match(/(\d+)\s*spectateurs/);
+        return match ? `Sortie concert · ${match[1]} pers` : "Sortie concert";
+      }
+      return "Sortie concert";
+
+    case "restaurant":
+      if (reason.includes("premium") || reason.includes("palace")) {
+        return "Fermeture palace";
+      }
+      if (reason.includes("festive")) {
+        return "Vague festive";
+      }
+      return "Fermeture restaurants";
+
+    case "theatre":
+      return "Fin spectacle";
+
+    case "airport":
+      if (reason.includes("departs") || reason.includes("matinaux")) {
+        return "Vague départs";
+      }
+      return "Flux passagers";
+
+    case "nightlife":
+      if (reason.includes("techno")) return "Sortie club techno";
+      return "Fermeture clubs";
+
+    case "train":
+      return "Arrivées trains";
+
+    case "expo":
+      return "Fermeture salon";
+
+    case "festival":
+      if (reason.includes("metro") || reason.includes("RER")) {
+        return "Fin festival · Zero métro";
+      }
+      return "Sortie festival";
+
+    case "hotel":
+      return "Sorties hôtel";
+
+    default:
+      // Use first part of reason if available
+      const shortReason = reason.split(" - ")[0];
+      return shortReason.length > 25 ? shortReason.slice(0, 23) + "..." : shortReason || "Signal";
+  }
+}
+
+// ── Signal Card (City-Alive Design) ──
+// Shows: ICON + VENUE | CAUSE | TIMING
+// Makes the city feel like it's moving
 
 function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean }) {
   const intensityColor = getIntensityColor(signal.intensity);
-  const confBadge = getConfidenceBadge(signal.confidence);
-  const proximityDisplay = getProximityDisplay(signal);
-
-  // Generate concrete, causality-driven action copy
-  const concreteAction = generateConcreteAction(signal);
+  const category = getSignalCategory(signal);
+  const icon = CATEGORY_ICONS[category];
+  const venueName = extractVenueName(signal);
+  const causeLine = generateCauseLine(signal);
 
   // Countdown
   const countdown = formatCountdown(signal.minutes_until_start, signal.is_active ?? false);
@@ -370,10 +563,8 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
   const isRare = isRareOpportunity(signal);
   const rareReason = isRare ? getRareOpportunityReason(signal) : null;
 
-  // Positioning info (secondary)
-  const positioningHint = signal.action?.includes("Position")
-    ? signal.action.replace(/^Position\s+/, "").split(" avant")[0]
-    : null;
+  // Is this a structural (big) signal?
+  const isStructural = isStructuralSignal(signal);
 
   return (
     <motion.div
@@ -383,11 +574,14 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
       transition={{ duration: 0.2 }}
       className="px-4 py-3"
       style={{
-        backgroundColor: isTop ? `${C.surface}` : C.surface,
-        border: isRare ? `1px solid ${C.amber}40` : isTop ? `1px solid ${C.greenDim}` : `1px solid ${C.border}`,
+        backgroundColor: C.surface,
+        border: isRare ? `1px solid ${C.amber}40` :
+                isStructural ? `1px solid ${C.greenDim}` :
+                `1px solid ${C.border}`,
         borderRadius: 4,
         borderLeft: `3px solid ${isRare ? C.amber : intensityColor}`,
-        boxShadow: isRare ? `0 0 12px ${C.amber}20` : isTop ? `0 0 12px ${C.green}15` : "none",
+        boxShadow: isRare ? `0 0 12px ${C.amber}20` :
+                   isStructural ? `0 0 8px ${C.green}10` : "none",
       }}
     >
       {/* RARE OPPORTUNITY banner */}
@@ -405,14 +599,13 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
               color: C.amber,
             }}
           >
-            RARE OPPORTUNITY
+            RARE
           </span>
           <span
             style={{
               ...label,
               fontSize: "0.55rem",
               color: C.textDim,
-              fontStyle: "italic",
             }}
           >
             {rareReason}
@@ -420,29 +613,32 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
         </div>
       )}
 
-      {/* ROW 1: Concrete causality (WHY + WHAT) + Countdown */}
-      <div className="flex items-center justify-between gap-2 mb-1.5">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span style={{ color: intensityColor, fontSize: "0.85rem", fontWeight: 600 }}>→</span>
+      {/* ROW 1: Icon + Venue Name + Countdown */}
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+          {/* Category icon */}
+          <span style={{ fontSize: "1.1rem", lineHeight: 1 }}>{icon}</span>
+          {/* Venue name - prominent */}
           <span
             className="truncate"
             style={{
               ...label,
-              fontSize: "0.9rem",
-              fontWeight: 500,
+              fontSize: "0.95rem",
+              fontWeight: 600,
               color: C.text,
+              letterSpacing: "0.01em",
             }}
           >
-            {concreteAction}
+            {venueName}
           </span>
         </div>
         {/* Countdown badge */}
         {countdown.text && (
           <span
-            className="uppercase tracking-[0.08em] px-1.5 py-0.5 shrink-0"
+            className="uppercase tracking-[0.05em] px-2 py-0.5 shrink-0"
             style={{
               ...mono,
-              fontSize: "0.55rem",
+              fontSize: "0.6rem",
               fontWeight: countdown.urgency === "imminent" ? 600 : 400,
               color: countdownColor,
               backgroundColor: countdown.urgency === "active" ? `${C.green}15` :
@@ -455,9 +651,23 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
         )}
       </div>
 
-      {/* ROW 2: Time window + badges */}
-      <div className="flex items-center justify-between gap-2 mb-1">
-        <div className="flex items-center gap-2 min-w-0">
+      {/* ROW 2: Cause line - what's happening */}
+      <div className="flex items-center gap-2 mb-1.5">
+        <span
+          style={{
+            ...label,
+            fontSize: "0.8rem",
+            fontWeight: 400,
+            color: C.textMid,
+          }}
+        >
+          {causeLine}
+        </span>
+      </div>
+
+      {/* ROW 3: Timing + zone */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
           <span
             style={{
               ...mono,
@@ -467,83 +677,33 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
           >
             {signal.time_window.label || signal.time_window.start}
           </span>
-          {proximityDisplay && (
+          {signal.zone && signal.zone !== venueName && (
             <span
-              className="px-1 py-0.5"
-              style={{
-                ...mono,
-                fontSize: "0.55rem",
-                color: proximityDisplay.color,
-                backgroundColor: `${proximityDisplay.color}12`,
-                borderRadius: 2,
-              }}
-            >
-              {proximityDisplay.text}
-            </span>
-          )}
-          {signal.driver_density && signal.driver_density !== "balanced" && (
-            <span
-              className="px-1 py-0.5 uppercase"
               style={{
                 ...label,
-                fontSize: "0.45rem",
-                color: signal.driver_density === "opportunity" ? C.green : C.red,
-                backgroundColor:
-                  signal.driver_density === "opportunity" ? `${C.green}15` : `${C.red}15`,
-                borderRadius: 2,
+                fontSize: "0.6rem",
+                color: C.textGhost,
               }}
             >
-              {signal.driver_density === "opportunity" ? "OPP" : "SAT"}
+              · {abbreviateZone(signal.zone)}
             </span>
           )}
         </div>
-        {signal.confidence && (
-          <span
-            style={{
-              fontSize: "0.55rem",
-              color: confBadge.color,
-            }}
-            title={signal.confidence}
-          >
-            {confBadge.icon}
-          </span>
-        )}
-      </div>
-
-      {/* ROW 3: Positioning hint (if available) or reason snippet */}
-      <p
-        style={{
-          ...label,
-          fontSize: "0.7rem",
-          fontWeight: 300,
-          color: C.textGhost,
-          margin: 0,
-          lineHeight: 1.3,
-        }}
-      >
-        {positioningHint ? `${positioningHint}` : truncateReason(signal.reason)}
-      </p>
-
-      {/* Overlapping factors - only for compound signals, inline */}
-      {signal.is_compound && signal.overlapping_factors && signal.overlapping_factors.length > 0 && (
-        <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-          {signal.overlapping_factors.slice(0, 3).map((factor, i) => (
-            <span
-              key={i}
-              className="px-1 py-0.5 uppercase tracking-[0.05em]"
+        {/* Intensity dots */}
+        <div className="flex items-center gap-0.5">
+          {[1, 2, 3, 4].map((level) => (
+            <div
+              key={level}
               style={{
-                ...label,
-                fontSize: "0.45rem",
-                color: C.amber,
-                backgroundColor: `${C.amber}12`,
-                borderRadius: 2,
+                width: 4,
+                height: 4,
+                borderRadius: "50%",
+                backgroundColor: level <= signal.intensity ? intensityColor : `${C.textGhost}30`,
               }}
-            >
-              {factor}
-            </span>
+            />
           ))}
         </div>
-      )}
+      </div>
     </motion.div>
   );
 }
@@ -1152,6 +1312,10 @@ export function LiveScreen({ signalFeed, flowState, onOpenDispatch }: LiveScreen
   // Forming signals for calm state preview
   const formingSignals = signals.filter((s) => s.is_forming);
 
+  // Split signals into two layers
+  const structuralSignals = signals.filter(isStructuralSignal);
+  const localSignals = signals.filter((s) => !isStructuralSignal(s));
+
   // Show calm state if no active signals
   const showCalm = totalActive === 0;
 
@@ -1242,13 +1406,83 @@ export function LiveScreen({ signalFeed, flowState, onOpenDispatch }: LiveScreen
         />
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-4">
-          <div className="flex flex-col gap-3">
-            <AnimatePresence mode="popLayout">
-              {signals.slice(0, 10).map((signal, index) => (
-                <SignalCard key={signal.id} signal={signal} isTop={index === 0} />
-              ))}
-            </AnimatePresence>
-          </div>
+          {/* STRUCTURAL SIGNALS — Big city waves */}
+          {structuralSignals.length > 0 && (
+            <div className="mb-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span
+                  className="uppercase tracking-[0.15em]"
+                  style={{
+                    ...label,
+                    fontSize: "0.5rem",
+                    color: C.green,
+                    fontWeight: 600,
+                  }}
+                >
+                  VAGUES MAJEURES
+                </span>
+                <div
+                  style={{
+                    flex: 1,
+                    height: 1,
+                    backgroundColor: `${C.green}30`,
+                  }}
+                />
+              </div>
+              <div className="flex flex-col gap-2.5">
+                <AnimatePresence mode="popLayout">
+                  {structuralSignals.slice(0, 4).map((signal) => (
+                    <SignalCard key={signal.id} signal={signal} />
+                  ))}
+                </AnimatePresence>
+              </div>
+            </div>
+          )}
+
+          {/* LOCAL OPPORTUNITIES — Micro waves */}
+          {localSignals.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <span
+                  className="uppercase tracking-[0.15em]"
+                  style={{
+                    ...label,
+                    fontSize: "0.5rem",
+                    color: C.textDim,
+                    fontWeight: 500,
+                  }}
+                >
+                  OPPORTUNITÉS LOCALES
+                </span>
+                <div
+                  style={{
+                    flex: 1,
+                    height: 1,
+                    backgroundColor: `${C.border}`,
+                  }}
+                />
+              </div>
+              <div className="flex flex-col gap-2.5">
+                <AnimatePresence mode="popLayout">
+                  {localSignals.slice(0, 6).map((signal) => (
+                    <SignalCard key={signal.id} signal={signal} />
+                  ))}
+                </AnimatePresence>
+              </div>
+            </div>
+          )}
+
+          {/* Empty state if no signals in either category */}
+          {structuralSignals.length === 0 && localSignals.length === 0 && (
+            <div
+              className="text-center py-8"
+              style={{ color: C.textGhost }}
+            >
+              <span style={{ ...label, fontSize: "0.75rem" }}>
+                Aucun signal actif
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>
