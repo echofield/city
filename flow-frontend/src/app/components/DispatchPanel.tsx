@@ -48,10 +48,10 @@ function getImpactForCorridor(
   signals: ContextSignal[]
 ): string | null {
   const corridorKeywords: Record<string, string[]> = {
-    nord: ["montmartre", "pigalle", "18", "19", "17", "nord", "gare du nord"],
+    nord: ["montmartre", "pigalle", "18", "19", "17", "nord", "gare du nord", "cdg"],
     est: ["bastille", "marais", "11", "12", "20", "nation", "est", "bercy"],
-    sud: ["latin", "13", "14", "sud", "montparnasse"],
-    ouest: ["trocadero", "16", "15", "defense", "ouest", "champs", "psg"],
+    sud: ["latin", "13", "14", "sud", "montparnasse", "versailles"],
+    ouest: ["trocadero", "16", "15", "defense", "ouest", "champs", "psg", "fashion"],
   };
 
   const keywords = corridorKeywords[corridorId] ?? [];
@@ -62,6 +62,37 @@ function getImpactForCorridor(
     }
   }
   return null;
+}
+
+// Generate concrete corridor context
+function getCorridorContext(corridorId: string, status: string): string {
+  const hour = new Date().getHours();
+
+  // Time-based context hints
+  const contextMap: Record<string, Record<string, string>> = {
+    nord: {
+      sature: hour >= 22 || hour < 6 ? "clubs Pigalle actifs" : "gares en pic",
+      dense: hour >= 3 && hour < 6 ? "CDG departs" : "flux transit",
+      fluide: "demande moderee",
+    },
+    est: {
+      sature: hour >= 22 ? "Bercy/Bastille pic" : "transit est",
+      dense: "Marais/Bastille actif",
+      fluide: "demande moderee",
+    },
+    sud: {
+      sature: "Montparnasse dense",
+      dense: hour >= 17 && hour < 19 ? "retours bureaux" : "flux sud",
+      fluide: "calme",
+    },
+    ouest: {
+      sature: hour >= 22 ? "8e/16e nightlife" : "La Defense pic",
+      dense: "restaurants/hotels premium",
+      fluide: "demande moderee",
+    },
+  };
+
+  return contextMap[corridorId]?.[status] ?? "";
 }
 
 function formatSessionDuration(ms: number): string {
@@ -259,88 +290,110 @@ export function DispatchPanel({
           </div>
         </div>
 
-        {/* Corridors */}
+        {/* Corridors - simplified with context */}
         <div className="px-5 py-4">
           <span
             className="block mb-3 uppercase tracking-[0.15em]"
             style={{ ...label, fontSize: "0.5rem", color: C.textGhost }}
           >
-            CORRIDORS
+            AXES PARIS
           </span>
-          <div className="flex flex-col gap-2.5">
-            {corridorStatuses.map((corridor) => (
-              <div key={corridor.id} className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span
-                    className="w-12 uppercase tracking-[0.1em]"
-                    style={{ ...label, fontSize: "0.75rem", fontWeight: 500, color: C.text }}
-                  >
-                    {corridor.label}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <div
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: "50%",
-                        backgroundColor: getStatusColor(corridor.status),
-                      }}
-                    />
-                    <span
-                      className="uppercase tracking-[0.08em]"
-                      style={{
-                        ...label,
-                        fontSize: "0.65rem",
-                        color: getStatusColor(corridor.status),
-                      }}
-                    >
-                      {getStatusLabel(corridor.status)}
-                    </span>
-                  </div>
-                </div>
-                <span
+          <div className="flex flex-col gap-3">
+            {corridorStatuses.map((corridor) => {
+              const context = corridor.impact ||
+                getCorridorContext(corridor.id, corridor.status);
+              return (
+                <div
+                  key={corridor.id}
+                  className="flex items-start gap-3"
                   style={{
-                    ...mono,
-                    fontSize: "0.6rem",
-                    color: C.textGhost,
+                    opacity: corridor.status === "fluide" ? 0.6 : 1,
                   }}
                 >
-                  {Math.round(corridor.avgSat)}%
-                </span>
-              </div>
-            ))}
+                  {/* Status dot */}
+                  <div
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      backgroundColor: getStatusColor(corridor.status),
+                      marginTop: 4,
+                      flexShrink: 0,
+                    }}
+                  />
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span
+                        className="uppercase tracking-[0.1em]"
+                        style={{
+                          ...label,
+                          fontSize: "0.75rem",
+                          fontWeight: 500,
+                          color: C.text,
+                        }}
+                      >
+                        {corridor.label}
+                      </span>
+                      <span
+                        className="uppercase tracking-[0.08em]"
+                        style={{
+                          ...label,
+                          fontSize: "0.5rem",
+                          color: getStatusColor(corridor.status),
+                        }}
+                      >
+                        {getStatusLabel(corridor.status)}
+                      </span>
+                    </div>
+                    {/* Context - the WHY */}
+                    {context && (
+                      <span
+                        style={{
+                          ...label,
+                          fontSize: "0.65rem",
+                          color: C.textDim,
+                          fontStyle: "italic",
+                        }}
+                      >
+                        {context.length > 35 ? context.slice(0, 33) + "..." : context}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        {/* Active Impacts (if any) */}
-        {activeImpacts.length > 0 && (
-          <div
-            className="px-5 py-3"
-            style={{ borderTop: `1px solid ${C.border}` }}
-          >
-            <span
-              className="block mb-2 uppercase tracking-[0.1em]"
-              style={{ ...label, fontSize: "0.5rem", color: C.textGhost }}
-            >
-              IMPACTS
+        {/* Quick recommendation */}
+        <div
+          className="px-5 py-3"
+          style={{ borderTop: `1px solid ${C.border}` }}
+        >
+          <div className="flex items-center gap-2">
+            <span style={{ fontSize: "0.8rem" }}>
+              {fieldState === "SATURE" ? "⚠" :
+               fieldState === "DENSE" ? "◉" : "○"}
             </span>
-            {activeImpacts.slice(0, 3).map((impact, i) => (
-              <div key={i} className="flex items-center gap-2 mb-1">
-                <span
-                  className="uppercase"
-                  style={{ ...label, fontSize: "0.55rem", color: C.amber }}
-                >
-                  {impact.corridor}
-                </span>
-                <span style={{ ...label, fontSize: "0.6rem", color: C.textDim }}>
-                  {impact.signal.length > 28
-                    ? impact.signal.slice(0, 26) + "..."
-                    : impact.signal}
-                </span>
-              </div>
-            ))}
+            <span
+              style={{
+                ...label,
+                fontSize: "0.7rem",
+                color: C.textMid,
+                fontStyle: "italic",
+              }}
+            >
+              {fieldState === "SATURE"
+                ? "Axes charges — positionnement anticipé conseillé"
+                : fieldState === "DENSE"
+                  ? "Activité soutenue — rester mobile"
+                  : fieldState === "MIXTE"
+                    ? "Demande variable — surveiller signaux"
+                    : "Ville calme — attente ou pause"}
+            </span>
           </div>
-        )}
+        </div>
       </motion.div>
     </motion.div>
   );

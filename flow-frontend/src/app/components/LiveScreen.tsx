@@ -129,6 +129,95 @@ function truncateReason(reason: string, maxLen: number = 45): string {
   return reason.slice(0, maxLen).trim() + "...";
 }
 
+// ── Generate concrete action copy based on signal type ──
+// The goal: explain WHY, not just WHERE
+
+function generateConcreteAction(signal: Signal): string {
+  const source = signal.source || "";
+  const type = signal.type || "";
+  const title = signal.title || "";
+  const zone = signal.zone || "";
+
+  // Extract key info from reason
+  const reason = signal.reason || "";
+
+  // Special events: Concert, Expo, Banlieue
+  if (source === "special-events" || type === "event_exit" || type === "banlieue_pressure") {
+    // Concert exit
+    if (reason.includes("concert") || reason.includes("spectateurs")) {
+      const match = reason.match(/(\d+)\s*spectateurs/);
+      const count = match ? match[1] : "";
+      const venue = title.split(" - ")[0] || zone;
+      if (signal.is_forming) {
+        return `${venue} — sortie ${count ? count + " pers" : "imminente"}`;
+      }
+      return `${venue} — vague de sortie`;
+    }
+    // Expo exit
+    if (reason.includes("expo") || reason.includes("salon") || reason.includes("visiteurs")) {
+      return `${zone} — fermeture expo`;
+    }
+    // Festival / banlieue events
+    if (reason.includes("festival") || reason.includes("RER") || reason.includes("goldmine")) {
+      return `${zone} — fin event, zero metro`;
+    }
+    // Chateau / wedding events
+    if (reason.includes("chateau") || reason.includes("mariages") || reason.includes("galas")) {
+      return `${zone} — sortie gala, courses longues`;
+    }
+    // Airport
+    if (reason.includes("CDG") || reason.includes("aeroport") || reason.includes("vols")) {
+      return "CDG — vague departs matinaux";
+    }
+    // Club/techno
+    if (reason.includes("techno") || reason.includes("club") || reason.includes("sold-out")) {
+      return `${zone} — fermeture club`;
+    }
+    // Fashion week
+    if (reason.includes("Fashion") || reason.includes("mode") || reason.includes("premium")) {
+      if (signal.is_forming) return `${zone} — Fashion Week, arrivees`;
+      return `${zone} — Fashion Week sortie`;
+    }
+  }
+
+  // Restaurant signals
+  if (source === "restaurant-daily" || type === "restaurant") {
+    const venueName = signal.display_label || title.split(" ")[0] || zone;
+    if (reason.includes("premium") || reason.includes("palace")) {
+      return `${venueName} — sortie palace`;
+    }
+    if (reason.includes("festive")) {
+      return `${venueName} — vague festive`;
+    }
+    return `${venueName} — fenetre sortie`;
+  }
+
+  // Nightlife signals
+  if (type === "nightlife" || type === "club") {
+    return `${zone} — fermeture clubs`;
+  }
+
+  // Station/transport signals
+  if (type === "station" || type === "transport") {
+    if (zone.includes("CDG") || zone.includes("Orly")) {
+      return `${zone} — flux passagers`;
+    }
+    if (zone.includes("Gare")) {
+      return `${zone} — arrivees trains`;
+    }
+  }
+
+  // Default: use existing action if it's concrete enough
+  const existingAction = signal.action || "";
+  if (existingAction.length < 30 && !existingAction.includes("Position")) {
+    return existingAction;
+  }
+
+  // Fallback: zone + simple context from reason
+  const shortReason = reason.split(" - ")[0] || reason.slice(0, 20);
+  return `${zone} — ${shortReason}`;
+}
+
 // ── Proximity fallback helper ──
 
 function getProximityDisplay(signal: Signal): { text: string; color: string } | null {
@@ -167,7 +256,14 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
   const displayLabel = getDisplayLabel(signal);
   const confBadge = getConfidenceBadge(signal.confidence);
   const proximityDisplay = getProximityDisplay(signal);
-  const zoneDisplay = abbreviateZone(signal.zone || signal.title);
+
+  // Generate concrete, causality-driven action copy
+  const concreteAction = generateConcreteAction(signal);
+
+  // Positioning info (secondary)
+  const positioningHint = signal.action?.includes("Position")
+    ? signal.action.replace(/^Position\s+/, "").split(" avant")[0]
+    : null;
 
   return (
     <motion.div
@@ -184,7 +280,7 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
         boxShadow: isTop ? `0 0 12px ${C.green}15` : "none",
       }}
     >
-      {/* ROW 1: Action line (primary) + badges */}
+      {/* ROW 1: Concrete causality (WHY + WHAT) */}
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <span style={{ color: intensityColor, fontSize: "0.85rem", fontWeight: 600 }}>→</span>
@@ -197,17 +293,46 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
               color: C.text,
             }}
           >
-            {signal.action}
+            {concreteAction}
           </span>
         </div>
-        {/* Compact badges: proximity + confidence + density */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Timing badge */}
+        <span
+          className="uppercase tracking-[0.08em] px-1.5 py-0.5 shrink-0"
+          style={{
+            ...label,
+            fontSize: "0.45rem",
+            fontWeight: 500,
+            color: getKindColor(signal.kind),
+            backgroundColor: `${getKindColor(signal.kind)}12`,
+            borderRadius: 2,
+          }}
+        >
+          {displayLabel}
+        </span>
+      </div>
+
+      {/* ROW 2: Time window + badges */}
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            style={{
+              ...mono,
+              fontSize: "0.75rem",
+              color: C.textMid,
+            }}
+          >
+            {signal.time_window.label || signal.time_window.start}
+          </span>
           {proximityDisplay && (
             <span
+              className="px-1 py-0.5"
               style={{
                 ...mono,
-                fontSize: "0.65rem",
+                fontSize: "0.6rem",
                 color: proximityDisplay.color,
+                backgroundColor: `${proximityDisplay.color}12`,
+                borderRadius: 2,
               }}
             >
               {proximityDisplay.text}
@@ -228,72 +353,21 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
               {signal.driver_density === "opportunity" ? "OPP" : "SAT"}
             </span>
           )}
-          {signal.confidence && (
-            <span
-              style={{
-                fontSize: "0.6rem",
-                color: confBadge.color,
-              }}
-              title={signal.confidence}
-            >
-              {confBadge.icon}
-            </span>
-          )}
         </div>
+        {signal.confidence && (
+          <span
+            style={{
+              fontSize: "0.55rem",
+              color: confBadge.color,
+            }}
+            title={signal.confidence}
+          >
+            {confBadge.icon}
+          </span>
+        )}
       </div>
 
-      {/* ROW 2: Zone/Title + Label + Time */}
-      <div className="flex items-center justify-between gap-2 mb-1">
-        <div className="flex items-center gap-2 min-w-0">
-          <span
-            className="truncate"
-            style={{
-              ...label,
-              fontSize: "0.85rem",
-              fontWeight: 400,
-              color: C.textMid,
-            }}
-          >
-            {zoneDisplay}
-          </span>
-          {signal.arrondissement && (
-            <span
-              style={{
-                ...label,
-                fontSize: "0.65rem",
-                color: C.textGhost,
-              }}
-            >
-              {signal.arrondissement}
-            </span>
-          )}
-          <span
-            className="uppercase tracking-[0.08em] px-1"
-            style={{
-              ...label,
-              fontSize: "0.45rem",
-              fontWeight: 500,
-              color: getKindColor(signal.kind),
-              backgroundColor: `${getKindColor(signal.kind)}12`,
-              borderRadius: 2,
-            }}
-          >
-            {displayLabel}
-          </span>
-        </div>
-        <span
-          style={{
-            ...mono,
-            fontSize: "0.65rem",
-            color: C.textDim,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {signal.display_sublabel || signal.time_window.label || signal.time_window.start}
-        </span>
-      </div>
-
-      {/* ROW 3: Short reason */}
+      {/* ROW 3: Positioning hint (if available) or reason snippet */}
       <p
         style={{
           ...label,
@@ -304,7 +378,7 @@ function SignalCard({ signal, isTop = false }: { signal: Signal; isTop?: boolean
           lineHeight: 1.3,
         }}
       >
-        {truncateReason(signal.reason)}
+        {positioningHint ? `📍 ${positioningHint}` : truncateReason(signal.reason)}
       </p>
 
       {/* Overlapping factors - only for compound signals, inline */}
